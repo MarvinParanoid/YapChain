@@ -5,6 +5,7 @@
 // replay and crash tests (test-only; the real dev-block format is M1.4).
 #pragma once
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <map>

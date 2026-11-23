@@ -63,7 +63,12 @@ void check_invariants(const KvReader& kv) {
     std::uint64_t sum = 0;
     bool overflow = false;
     kv.for_each([&](const Bytes& k, const Bytes& v) {
-        if (k.empty() || k[0] != ns::kAccount) return;
+        // Invariant 4 in full: exactly one key in the 0x00 and 0x02 namespaces, no unknown namespaces.
+        if (k.empty() || k[0] > ns::kNullifier) throw FailStop("invariant 4: key outside the known namespaces");
+        if ((k[0] == ns::kChainState || k[0] == ns::kParams) && k.size() != 1) {
+            throw FailStop("invariant 4: extra key in a singleton namespace");
+        }
+        if (k[0] != ns::kAccount) return;
         auto a = ycs::decode<AccountState>(v);
         if (!a) throw FailStop("corrupted account value");
         const auto s = checked_add(sum, a->balance);

@@ -69,6 +69,38 @@ VerifyReport verify_state(const storage::KvStore& live) {
             throw StoreCorruption("block record of the last height is missing or inconsistent");
         }
     }
+    if (!store.get(Table::Results, results_key(0))) throw StoreCorruption("genesis state root record is missing");
+
+    // Dev chains: exactly one stored block per committed height, consistent with the metadata.
+    const ByteView dev_config_key = as_bytes("yapchain/dev");  // owned by the dev module (ADR-0025)
+    if (store.get(Table::Meta, dev_config_key)) {
+        std::uint64_t count = 0;
+        bool out_of_range = false;
+        store.for_each(Table::Blocks, [&](const Bytes& k, const Bytes&) {
+            ++count;
+            std::uint64_t h = 0;
+            for (const Byte b : k) h = (h << 8) | b;
+            if (k.size() != 8 || h == 0 || h > meta->last_height) out_of_range = true;
+        });
+        if (out_of_range || count != meta->last_height) {
+            throw StoreCorruption("dev blocks table does not hold exactly heights 1.." + std::to_string(meta->last_height));
+        }
+        if (meta->last_height > 0) {
+            // Decoded structurally here; the header layout is owned by the dev module.
+            const auto raw = store.get(Table::Blocks, results_key(meta->last_height));
+            ycs::Reader r(*raw);
+            (void)r.u16();
+            (void)r.string(32);
+            const auto h = r.u64();
+            (void)r.u64();
+            (void)r.fixed<32>();
+            (void)r.fixed<32>();
+            const auto root = r.fixed<32>();
+            if (!r.ok() || h != meta->last_height || root != meta->last_state_root) {
+                throw StoreCorruption("dev block of the last height disagrees with the metadata");
+            }
+        }
+    }
     rep.smt_leaves = tree.leaves.size();
     rep.smt_internal_nodes = tree.internal_nodes;
     return rep;

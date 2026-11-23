@@ -3,6 +3,7 @@
 
 #include "temp_dir.hpp"
 #include "testnet.hpp"
+#include "yap/chain/recovery.hpp"
 #include "yap/dev/dev_chain.hpp"
 #include "yap/merkle/merkle.hpp"
 #include "yap/storage/lmdb_store.hpp"
@@ -266,5 +267,33 @@ TEST_CASE("produce validates the block time before executing it", "[dev][audit]"
         FAIL("accepted");
     } catch (const dev::BlockRejected& e) {
         CHECK(e.reason() == Reject::BadTime);
+    }
+}
+
+TEST_CASE("verify_state checks the dev blocks table", "[dev][recovery][audit]") {
+    const auto net = TestNet::make(5);
+    storage::MemoryStore store;
+    produce_chain(store, net, 3);
+    CHECK_NOTHROW((void)chain::verify_state(store));
+    SECTION("missing block") {
+        storage::WriteBatch b;
+        b.erase(storage::Table::Blocks, dev::block_key(2));
+        store.write(b);
+        CHECK_THROWS_AS((void)chain::verify_state(store), chain::StoreCorruption);
+    }
+    SECTION("block beyond the committed height") {
+        storage::WriteBatch b;
+        b.put(storage::Table::Blocks, dev::block_key(9), *store.get(storage::Table::Blocks, dev::block_key(3)));
+        store.write(b);
+        CHECK_THROWS_AS((void)chain::verify_state(store), chain::StoreCorruption);
+    }
+    SECTION("last block disagreeing with the metadata") {
+        dev::DevChain c(store);
+        auto last = *c.block(3);
+        last.header.state_root[0] ^= 1;
+        storage::WriteBatch b;
+        b.put(storage::Table::Blocks, dev::block_key(3), ycs::encode(last));
+        store.write(b);
+        CHECK_THROWS_AS((void)chain::verify_state(store), chain::StoreCorruption);
     }
 }

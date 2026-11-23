@@ -182,3 +182,15 @@ TEST_CASE("overlay semantics", "[ledger][kv]") {
     o.apply_to(store);
     CHECK(dump(store) == std::map<Bytes, Bytes>{{{2}, {21}}, {{3}, {30}}});
 }
+
+TEST_CASE("invariant 4 is checked in full", "[ledger][invariants][audit]") {
+    const auto a = key_of(19);
+    state::MemoryKvStore store;
+    seed_state(store, {{id_of(a), 1'000}});
+    for (const Bytes& extra : {Bytes{state::ns::kChainState, 1}, Bytes{state::ns::kParams, 0}, Bytes{0x0A, 1}, Bytes{0xFF}}) {
+        state::Overlay o(&store);
+        o.put(extra, Bytes{0});
+        CHECK_THROWS_AS(state::check_invariants(o), FailStop);
+    }
+    CHECK_NOTHROW(state::check_invariants(store));
+}
