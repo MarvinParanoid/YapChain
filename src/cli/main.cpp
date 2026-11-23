@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
         ctx.password_file = password_file;
     });
     register_keys(app, ctx);
+    register_tx(app, ctx);
 
     try {
         app.parse(argc, argv);

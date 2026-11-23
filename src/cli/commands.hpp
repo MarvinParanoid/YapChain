@@ -11,6 +11,7 @@ class App;
 namespace yap::cli {
 
 void register_keys(CLI::App& app, Context& ctx);
+void register_tx(CLI::App& app, Context& ctx);
 
 wallet::KeyInfo load_key_info(const std::filesystem::path& path, wallet::KeyPurpose expected);
 crypto::SecretKey unlock_key(const Context& ctx, const std::filesystem::path& path, wallet::KeyPurpose expected);
