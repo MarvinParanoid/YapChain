@@ -88,6 +88,26 @@ def main(yap, corrupt):
         check(roots_a == roots_b, "replayed roots equal the original chain")
         check(b.kv("query", "chain") == chain_a, "replayed chain summary equal")
 
+        # Concurrent writers (audit M1.5): two imports of competing height-2 blocks at the same time
+        # must never both succeed, and the database must stay consistent.
+        a.run("tx", "transfer", "--from", "alice", "--to", bob, "--amount", "77", "--out", f("race.hex"))
+        alt = Cli(yap, f("home-alt"), pw)
+        shutil.copytree(f("home-a"), f("home-alt"))
+        alt.run("dev", "produce", "--tx", f("race.hex"))  # a different block 5 on a copy of the chain
+        alt.run("dev", "block", "--height", "5", "--out", f("alt5.hex"))
+        a.run("dev", "produce")
+        a.run("dev", "block", "--height", "5", "--out", f("main5.hex"))
+        for i in range(12):
+            race_home = f(f"race-{i}")
+            shutil.copytree(f("home-b"), race_home)
+            r = Cli(yap, race_home, pw)
+            r.run("dev", "replay", "--journal", f("journal.hex"))  # heights 1..4
+            procs = [subprocess.Popen([yap, "--home", race_home, "dev", "import", blk], stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True) for blk in (f("main5.hex"), f("alt5.hex"))]
+            codes = [p.wait() for p in procs]
+            check(codes.count(0) <= 1, f"both competing imports succeeded (run {i})")
+            check(r.kv("verify-state")["status"] == "ok", f"database consistent after the race (run {i})")
+
         # a node trusting a different producer refuses the blocks
         c = Cli(yap, f("home-c"), pw)
         c.run("dev", "init", "--genesis", f("genesis.json"), "--producer-pubkey", "11" * 32, expect=0)

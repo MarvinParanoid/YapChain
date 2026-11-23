@@ -4,6 +4,7 @@
 #include "ledger_fixture.hpp"
 #include "temp_dir.hpp"
 #include "yap/chain/engine.hpp"
+#include "yap/chain/recovery.hpp"
 #include "yap/storage/lmdb_store.hpp"
 #include "yap/state/state.hpp"
 #include "yap/state/state_root.hpp"
@@ -280,4 +281,37 @@ TEST_CASE("MAP_FULL during commit is reported and recoverable", "[engine][lmdb]"
     CHECK_NOTHROW(e.commit());
     CHECK(e.info().last_height == committed_height + 1);
     CHECK_NOTHROW(state::check_invariants(e.committed()));
+}
+
+// ------------------------------------------------------------------ concurrent writers (audit M1.5)
+
+TEST_CASE("a commit computed from an outdated view is refused", "[engine][audit]") {
+    const auto g = genesis();
+    storage::MemoryStore store;
+    chain::Engine a(store);
+    a.init_chain(g);
+    chain::Engine b(store);  // e.g. a second process on the same database
+    a.finalize_block(ctx(g, 1, {transfer_tx(kAlice, id_of(kBob), 10, 0)}));
+    b.finalize_block(ctx(g, 1, {transfer_tx(kAlice, id_of(key_of(77)), 99, 0)}));  // a different block
+    const auto root = a.commit();
+    CHECK_THROWS_AS(b.commit(), storage::StorageConflict);  // nothing of B's block is written
+    CHECK(chain::read_meta(store)->last_state_root == root);
+    CHECK_NOTHROW((void)chain::verify_state(store));
+    b.abort_pending();
+    CHECK_THROWS_AS(b.finalize_block(ctx(g, 2, {})), storage::StorageConflict);  // stale engine detected early
+    CHECK_THROWS_AS((void)b.process_proposal(ctx(g, 2, {})), storage::StorageConflict);
+    CHECK_THROWS_AS(b.check_tx(transfer_tx(kAlice, id_of(kBob), 1, 1)), storage::StorageConflict);
+    chain::Engine reopened(store);
+    CHECK_NOTHROW(reopened.finalize_block(ctx(g, 2, {})));
+}
+
+TEST_CASE("two concurrent initialisations cannot both succeed", "[engine][audit]") {
+    storage::MemoryStore store;
+    chain::Engine a(store);
+    chain::Engine b(store);
+    a.init_chain(genesis());
+    auto other = genesis();
+    other.genesis_time_ms += 1;
+    CHECK_THROWS_AS(b.init_chain(other), storage::StorageConflict);
+    CHECK(chain::read_meta(store)->genesis_hash == chain::genesis_hash(genesis()));
 }

@@ -57,6 +57,14 @@ void Engine::require_initialized() const {
     if (!meta_) throw std::logic_error("Engine: init_chain has not been called");
 }
 
+void Engine::require_fresh() const {
+    require_initialized();
+    const auto stored = store_->get(Table::Meta, meta_key());
+    if (!stored || *stored != ycs::encode(*meta_)) {
+        throw storage::StorageConflict("the store was advanced by another writer; reopen it");
+    }
+}
+
 void Engine::append_state_changes(storage::WriteBatch& batch, const state::Overlay& changes) const {
     // Deterministic order with named fault points: accounts, ChainState, everything else.
     std::vector<const std::pair<const Bytes, std::optional<Bytes>>*> accounts;
@@ -111,6 +119,7 @@ Hash32 Engine::init_chain(const Genesis& genesis, const storage::WriteBatch& ext
 
     StoreMeta meta{kSchemaVersion, genesis.chain_id, genesis_hash(genesis), 0, root};
     storage::WriteBatch batch;
+    batch.expect(Table::Meta, meta_key(), std::nullopt);  // nobody initialised it meanwhile
     append_state_changes(batch, o);
     append_smt_changes(batch, smt);
     batch.mark("after_smt");
@@ -139,7 +148,7 @@ std::optional<BlockRecord> Engine::block_record(std::uint64_t height) const {
 }
 
 CheckResult Engine::check_tx(ByteView tx_bytes) {
-    require_initialized();
+    require_fresh();
     if (!check_state_) check_state_ = std::make_unique<state::Overlay>(&state_view_);
     auto r = state::execute_tx(*check_state_, tx_bytes, meta_->last_height + 1, meta_->chain_id);
     return {r.code, std::move(r.log)};
@@ -147,7 +156,7 @@ CheckResult Engine::check_tx(ByteView tx_bytes) {
 
 std::vector<Bytes> Engine::prepare_proposal(const state::BlockContext& ctx, const std::vector<Bytes>& candidates,
                                             std::uint64_t max_bytes, std::vector<tx::TxCode>* codes) const {
-    require_initialized();
+    require_fresh();
     state::Overlay scratch(&state_view_);
     std::vector<Bytes> out;
     std::uint64_t used = 0;
@@ -167,7 +176,7 @@ std::vector<Bytes> Engine::prepare_proposal(const state::BlockContext& ctx, cons
 }
 
 bool Engine::process_proposal(const state::BlockContext& ctx) const {
-    require_initialized();
+    require_fresh();
     state::Overlay scratch(&state_view_);  // discarded: ProcessProposal never changes the state
     merkle::SmtUpdater smt(nodes_, meta_->last_state_root);
     const auto result = state::execute_block(scratch, meta_->chain_id, ctx, incremental_root(smt));
@@ -178,7 +187,7 @@ bool Engine::process_proposal(const state::BlockContext& ctx) const {
 }
 
 state::BlockResult Engine::finalize_block(const state::BlockContext& ctx) {
-    require_initialized();
+    require_fresh();
     if (pending_) throw std::logic_error("Engine: finalize_block called twice without commit");
     auto overlay = std::make_unique<state::Overlay>(&state_view_);
     auto smt = std::make_unique<merkle::SmtUpdater>(nodes_, meta_->last_state_root);
@@ -213,6 +222,8 @@ Hash32 Engine::commit(const storage::WriteBatch& extra) {
     for (const auto& r : pending_result_->tx_results) record.codes.push_back(static_cast<std::uint32_t>(r.code));
 
     storage::WriteBatch batch;
+    // Compare-and-swap: the pending block was computed on top of exactly this committed height.
+    batch.expect(Table::Meta, meta_key(), ycs::encode(*meta_));
     append_state_changes(batch, *pending_);
     append_smt_changes(batch, *pending_smt_);
     batch.mark("after_smt");

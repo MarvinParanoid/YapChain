@@ -47,13 +47,21 @@ public:
     using StorageError::StorageError;
 };
 
+/// A batch precondition (WriteBatch::expect) did not hold: another writer changed the store since
+/// the caller read it. The batch was not applied.
+class StorageConflict : public StorageError {
+public:
+    using StorageError::StorageError;
+};
+
 struct WriteOp {
-    enum class Kind : std::uint8_t { Put, Erase, Marker };
+    enum class Kind : std::uint8_t { Put, Erase, Marker, Expect };
     Kind kind = Kind::Put;
     Table table = Table::State;
     Bytes key;
     Bytes value;
     std::string marker;  ///< fault-injection point name for Kind::Marker
+    bool expect_absent = false;  ///< Kind::Expect: the key must not exist (otherwise it must equal `value`)
 };
 
 /// Ordered list of writes applied atomically by KvStore::write(). Markers are no-ops that name
@@ -63,6 +71,10 @@ public:
     void put(Table t, Bytes key, Bytes value);
     void erase(Table t, Bytes key);
     void mark(std::string name);
+    /// Precondition checked inside the write transaction, before later operations are applied:
+    /// the key must currently hold exactly `value` (or be absent for nullopt). On mismatch the
+    /// whole batch fails with StorageConflict. This is what makes commits compare-and-swap.
+    void expect(Table t, Bytes key, std::optional<Bytes> value);
     [[nodiscard]] const std::vector<WriteOp>& ops() const noexcept { return ops_; }
     [[nodiscard]] bool empty() const noexcept { return ops_.empty(); }
 

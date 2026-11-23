@@ -61,6 +61,24 @@ void contract(KvStore& s) {
     CHECK_THROWS_AS(s.write(b3), std::runtime_error);
     set_fault_hook({});
     CHECK(dump(s, Table::State) == before);
+
+    // Preconditions (compare-and-swap) are checked inside the transaction.
+    WriteBatch cas_ok;
+    cas_ok.expect(Table::State, {0x01, 0x00}, Bytes{0xAB});
+    cas_ok.expect(Table::Meta, {0x09}, std::nullopt);
+    cas_ok.put(Table::Meta, {0x09}, {9});
+    CHECK_NOTHROW(s.write(cas_ok));
+    const auto after_cas = dump(s, Table::Meta);
+    WriteBatch cas_bad;
+    cas_bad.put(Table::State, {0x07}, {7});
+    cas_bad.expect(Table::Meta, {0x09}, std::nullopt);  // no longer absent
+    CHECK_THROWS_AS(s.write(cas_bad), StorageConflict);
+    WriteBatch cas_bad2;
+    cas_bad2.expect(Table::State, {0x01, 0x00}, Bytes{0xAC});  // wrong value
+    cas_bad2.put(Table::State, {0x07}, {7});
+    CHECK_THROWS_AS(s.write(cas_bad2), StorageConflict);
+    CHECK_FALSE(s.get(Table::State, Bytes{0x07}).has_value());
+    CHECK(dump(s, Table::Meta) == after_cas);
 }
 
 }  // namespace
@@ -80,6 +98,16 @@ TEST_CASE("WriteBatch rejects empty keys", "[storage]") {
     WriteBatch b;
     CHECK_THROWS_AS(b.put(Table::State, {}, {1}), std::invalid_argument);
     CHECK_THROWS_AS(b.erase(Table::State, {}), std::invalid_argument);
+}
+
+TEST_CASE("only one writer may open an LMDB database; readers may join", "[storage][lmdb]") {
+    test::TempDir dir;
+    LmdbStore writer({dir.path()});
+    CHECK_THROWS_AS(LmdbStore({dir.path()}), StorageError);  // second writer, even in-process
+    LmdbStore::Options ro{dir.path()};
+    ro.read_only = true;
+    ro.create = false;
+    CHECK_NOTHROW(LmdbStore(ro));
 }
 
 TEST_CASE("LMDB data survives closing and reopening", "[storage][lmdb]") {

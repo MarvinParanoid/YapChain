@@ -84,6 +84,8 @@ public:
 
 private:
     void require_initialized() const;
+    /// Throws StorageConflict if another writer advanced the store since this engine read it.
+    void require_fresh() const;
     void append_state_changes(storage::WriteBatch& batch, const state::Overlay& changes) const;
     static void append_smt_changes(storage::WriteBatch& batch, const merkle::SmtUpdater& smt);
     [[nodiscard]] state::RootFn incremental_root(merkle::SmtUpdater& smt) const;

@@ -26,6 +26,13 @@ void WriteBatch::erase(Table t, Bytes key) {
     ops_.push_back({WriteOp::Kind::Erase, t, std::move(key), {}, {}});
 }
 
+void WriteBatch::expect(Table t, Bytes key, std::optional<Bytes> value) {
+    if (key.empty()) throw std::invalid_argument("WriteBatch: empty key");
+    WriteOp op{WriteOp::Kind::Expect, t, std::move(key), value.value_or(Bytes{}), {}};
+    op.expect_absent = !value.has_value();
+    ops_.push_back(std::move(op));
+}
+
 void WriteBatch::mark(std::string name) { ops_.push_back({WriteOp::Kind::Marker, Table::State, {}, {}, std::move(name)}); }
 
 namespace {
@@ -66,6 +73,13 @@ void MemoryStore::write(const WriteBatch& batch) {
         for (const auto& op : batch.ops()) {
             if (op.kind == WriteOp::Kind::Marker) {
                 fault_point(op.marker);
+                continue;
+            }
+            if (op.kind == WriteOp::Kind::Expect) {
+                const auto& m = tables_[static_cast<std::size_t>(op.table)];
+                const auto it = m.find(op.key);
+                const bool ok = op.expect_absent ? it == m.end() : (it != m.end() && it->second == op.value);
+                if (!ok) throw StorageConflict("store changed by another writer (precondition failed)");
                 continue;
             }
             const auto t = static_cast<std::size_t>(op.table);

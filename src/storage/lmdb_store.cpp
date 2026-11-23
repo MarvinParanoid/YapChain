@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "yap/storage/lmdb_store.hpp"
 
+#include <fcntl.h>
 #include <lmdb.h>
+#include <sys/file.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstring>
 
 #include <array>
 #include <string>
@@ -75,9 +81,11 @@ struct LmdbStore::Impl {
     MDB_env* env = nullptr;
     std::array<MDB_dbi, kTableCount> dbi{};
     bool read_only = false;
+    int lock_fd = -1;  ///< exclusive writer lock (flock) on <dir>/yap.lock
 
     ~Impl() {
         if (env != nullptr) mdb_env_close(env);  // closes all DBI handles
+        if (lock_fd >= 0) ::close(lock_fd);      // releases the writer lock
     }
 };
 
@@ -87,6 +95,20 @@ LmdbStore::LmdbStore(const Options& options) : impl_(std::make_unique<Impl>()) {
         std::error_code ec;
         std::filesystem::create_directories(options.dir, ec);
         if (ec) throw StorageError("cannot create " + options.dir.string() + ": " + ec.message());
+    }
+    if (!options.read_only) {
+        // One writing process per database: LMDB serialises single transactions, but the engine's
+        // read-modify-write of a whole block must not interleave with another writer. The lock is
+        // per open file description, so it also prevents opening the same environment twice for
+        // writing in one process (which LMDB forbids). It is released when the process dies.
+        const auto lock_path = options.dir / "yap.lock";
+        impl_->lock_fd = ::open(lock_path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        if (impl_->lock_fd < 0) {
+            throw StorageError("cannot open " + lock_path.string() + ": " + std::strerror(errno));
+        }
+        if (::flock(impl_->lock_fd, LOCK_EX | LOCK_NB) != 0) {
+            throw StorageError("database " + options.dir.string() + " is in use by another writer");
+        }
     }
     check(mdb_env_create(&impl_->env), "mdb_env_create");
     check(mdb_env_set_maxdbs(impl_->env, kTableCount), "mdb_env_set_maxdbs");
@@ -151,6 +173,16 @@ void LmdbStore::write(const WriteBatch& batch) {
             case WriteOp::Kind::Marker:
                 fault_point(op.marker);
                 break;
+            case WriteOp::Kind::Expect: {
+                MDB_val k = as_val(op.key);
+                MDB_val v{};
+                const int rc = mdb_get(txn.get(), dbi, &k, &v);
+                if (rc != MDB_SUCCESS && rc != MDB_NOTFOUND) check(rc, "mdb_get");
+                const bool present = rc == MDB_SUCCESS;
+                const bool ok = op.expect_absent ? !present : (present && to_bytes(v) == op.value);
+                if (!ok) throw StorageConflict("store changed by another writer (precondition failed)");
+                break;
+            }
         }
     }
     fault_point("before_commit");
