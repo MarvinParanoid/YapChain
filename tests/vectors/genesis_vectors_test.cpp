@@ -37,3 +37,15 @@ TEST_CASE("genesis vectors: every invalid genesis is rejected", "[vectors][genes
     }
     CHECK(n >= 40);
 }
+
+TEST_CASE("genesis JSON writer is the inverse of the strict parser", "[vectors][genesis]") {
+    const auto vec = test::load_vectors("genesis.json");
+    for (const auto& v : vec.at("valid")) {
+        INFO(v.at("name").get<std::string>());
+        const auto g = chain::parse_genesis_json(v.at("json").get<std::string>()).value();
+        const auto again = chain::parse_genesis_json(chain::to_genesis_json(g));
+        REQUIRE(again.has_value());
+        CHECK(*again == g);
+        CHECK(to_hex(chain::genesis_hash(*again)) == v.at("genesis_hash").get<std::string>());
+    }
+}

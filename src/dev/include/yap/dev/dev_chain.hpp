@@ -65,8 +65,9 @@ public:
 
     /// Builds, signs and commits the next block from `candidates` (invalid ones are left out).
     /// Time defaults to last time + 2000 ms (deterministic, never the wall clock).
+    /// `codes` (optional) receives the execution code of every candidate (OK = included).
     DevBlock produce(const crypto::SecretKey& producer, const std::vector<Bytes>& candidates,
-                     std::optional<std::uint64_t> time_ms = std::nullopt);
+                     std::optional<std::uint64_t> time_ms = std::nullopt, std::vector<tx::TxCode>* codes = nullptr);
 
     /// Fully validates and commits `block` (protocol.md §14). Throws BlockRejected.
     state::BlockResult import(const DevBlock& block);

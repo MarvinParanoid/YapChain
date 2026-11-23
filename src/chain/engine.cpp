@@ -115,6 +115,7 @@ Hash32 Engine::init_chain(const Genesis& genesis, const storage::WriteBatch& ext
     append_smt_changes(batch, smt);
     batch.mark("after_smt");
     batch.put(Table::Meta, meta_key(), ycs::encode(meta));
+    batch.put(Table::Results, results_key(0), ycs::encode(BlockRecord{0, root, {}}));  // genesis root
     for (const auto& op : extra.ops()) {
         if (op.kind == storage::WriteOp::Kind::Put) batch.put(op.table, op.key, op.value);
         if (op.kind == storage::WriteOp::Kind::Erase) batch.erase(op.table, op.key);
@@ -145,14 +146,20 @@ CheckResult Engine::check_tx(ByteView tx_bytes) {
 }
 
 std::vector<Bytes> Engine::prepare_proposal(const state::BlockContext& ctx, const std::vector<Bytes>& candidates,
-                                            std::uint64_t max_bytes) const {
+                                            std::uint64_t max_bytes, std::vector<tx::TxCode>* codes) const {
     require_initialized();
     state::Overlay scratch(&state_view_);
     std::vector<Bytes> out;
     std::uint64_t used = 0;
+    if (codes != nullptr) codes->clear();
     for (const auto& tx : candidates) {
-        if (tx.size() > max_bytes - used) continue;  // used <= max_bytes always holds
-        if (state::execute_tx(scratch, tx, ctx.height, meta_->chain_id).code != tx::TxCode::Ok) continue;
+        if (tx.size() > max_bytes - used) {  // used <= max_bytes always holds
+            if (codes != nullptr) codes->push_back(tx::TxCode::ErrTooLarge);
+            continue;
+        }
+        const auto code = state::execute_tx(scratch, tx, ctx.height, meta_->chain_id).code;
+        if (codes != nullptr) codes->push_back(code);
+        if (code != tx::TxCode::Ok) continue;
         used += tx.size();
         out.push_back(tx);
     }

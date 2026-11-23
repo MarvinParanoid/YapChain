@@ -51,7 +51,8 @@ bool DevChain::init(storage::KvStore& store, const chain::Genesis& genesis, cons
     chain::Engine e(store);
     if (e.initialized()) {
         const auto raw = store.get(Table::Meta, dev_config_key());
-        const auto cfg = raw ? ycs::decode<DevConfig>(*raw) : Result<DevConfig, ycs::DecodeError>(unexpected(ycs::DecodeError::Truncated));
+        if (!raw) throw std::invalid_argument("store holds a chain that is not a dev chain");
+        const auto cfg = ycs::decode<DevConfig>(*raw);
         if (!cfg || cfg->producer != producer || e.meta().genesis_hash != chain::genesis_hash(genesis)) {
             throw std::invalid_argument("store already holds a different chain (genesis or producer key differs)");
         }
@@ -155,7 +156,7 @@ state::BlockResult DevChain::import(const DevBlock& b) {
 }
 
 DevBlock DevChain::produce(const crypto::SecretKey& producer, const std::vector<Bytes>& candidates,
-                           std::optional<std::uint64_t> time_ms) {
+                           std::optional<std::uint64_t> time_ms, std::vector<tx::TxCode>* codes) {
     if (producer.public_key() != config_.producer) {
         throw BlockRejected(Reject::WrongProducer, "this key is not the configured dev producer");
     }
@@ -171,13 +172,14 @@ DevBlock DevChain::produce(const crypto::SecretKey& producer, const std::vector<
     b.header.producer_pubkey = producer.public_key();
 
     // Select the valid candidates (bounded by the dev-block limits), then execute to get the root.
-    std::vector<Bytes> bounded;
+    if (candidates.size() > kMaxDevBlockTxs) {
+        throw BlockRejected(Reject::InvalidTransaction, "more than 10000 candidate transactions");
+    }
     for (const auto& t : candidates) {
-        if (bounded.size() == kMaxDevBlockTxs) break;
-        if (t.size() <= kMaxDevBlockTxBytes) bounded.push_back(t);
+        if (t.size() > kMaxDevBlockTxBytes) throw BlockRejected(Reject::InvalidTransaction, "transaction above 65536 bytes");
     }
     auto ctx = context_for(b);
-    b.txs = engine_.prepare_proposal(ctx, bounded, UINT64_MAX);
+    b.txs = engine_.prepare_proposal(ctx, candidates, UINT64_MAX, codes);
     ctx.txs = b.txs;
     const auto result = engine_.finalize_block(ctx);
     engine_.abort_pending();

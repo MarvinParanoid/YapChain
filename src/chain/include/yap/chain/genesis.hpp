@@ -62,6 +62,9 @@ struct Genesis {
 /// the offending field.
 [[nodiscard]] Result<Genesis, std::string> parse_genesis_json(std::string_view text);
 
+/// JSON representation of §11.3 (the inverse of parse_genesis_json). `g` must be valid.
+[[nodiscard]] std::string to_genesis_json(const Genesis& g);
+
 /// Writes the initial state of §11.4 item 3 into `out`. `g` must be valid.
 void write_initial_state(const Genesis& g, state::Overlay& out);
 

@@ -56,8 +56,11 @@ public:
 
     /// PrepareProposal: keeps, in order, the candidates that execute with OK on a scratch copy of the
     /// state and fit into `max_bytes` in total (protocol.md §10). `ctx.txs` is ignored.
+    /// If `codes` is given it receives, per candidate, the code of its sequential execution
+    /// (or ErrTooLarge if it did not fit the byte budget).
     [[nodiscard]] std::vector<Bytes> prepare_proposal(const state::BlockContext& ctx, const std::vector<Bytes>& candidates,
-                                                      std::uint64_t max_bytes) const;
+                                                      std::uint64_t max_bytes,
+                                                      std::vector<tx::TxCode>* codes = nullptr) const;
 
     /// ProcessProposal: ACCEPT iff every transaction executes with OK. Never modifies the state.
     [[nodiscard]] bool process_proposal(const state::BlockContext& ctx) const;

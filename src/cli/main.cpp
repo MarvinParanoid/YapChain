@@ -8,6 +8,7 @@
 #include "commands.hpp"
 #include "yap/chain/store_layout.hpp"
 #include "yap/common/fail_stop.hpp"
+#include "yap/dev/dev_chain.hpp"
 #include "yap/storage/store.hpp"
 
 int main(int argc, char** argv) {
@@ -27,6 +28,9 @@ int main(int argc, char** argv) {
     });
     register_keys(app, ctx);
     register_tx(app, ctx);
+    register_genesis(app, ctx);
+    register_dev(app, ctx);
+    register_query(app, ctx);
 
     try {
         app.parse(argc, argv);
@@ -36,6 +40,9 @@ int main(int argc, char** argv) {
     } catch (const CliError& e) {
         std::cerr << "error: " << e.what() << "\n";
         return e.code();
+    } catch (const yap::dev::BlockRejected& e) {
+        std::cerr << "error: block rejected: " << e.what() << "\n";
+        return kExitRejected;
     } catch (const yap::chain::IncompatibleSchema& e) {
         std::cerr << "storage error: " << e.what() << "\n";
         return kExitStorage;

@@ -345,6 +345,61 @@ Result<Genesis, std::string> parse_genesis_json(std::string_view text) {
     return g;
 }
 
+std::string to_genesis_json(const Genesis& g) {
+    const std::string_view hrp = hrp_for_chain(g.chain_id);
+    const auto& p = g.params;
+    json root;
+    root["chain_id"] = g.chain_id;
+    root["genesis_time_ms"] = std::to_string(g.genesis_time_ms);
+    root["initial_height"] = std::to_string(g.initial_height);
+    root["params"] = {{"min_fee", std::to_string(p.min_fee)},
+                      {"fee_burn_bps", p.fee_burn_bps},
+                      {"block_reward", std::to_string(p.block_reward)},
+                      {"reward_validators_bps", p.reward_validators_bps},
+                      {"reward_pool_bps", p.reward_pool_bps},
+                      {"reward_treasury_bps", p.reward_treasury_bps},
+                      {"max_issuance", std::to_string(p.max_issuance)},
+                      {"max_tx_bytes", p.max_tx_bytes},
+                      {"max_memo_bytes", p.max_memo_bytes},
+                      {"max_tx_ttl_blocks", std::to_string(p.max_tx_ttl_blocks)},
+                      {"epoch_length_blocks", std::to_string(p.epoch_length_blocks)},
+                      {"max_attestation_validity_s", std::to_string(p.max_attestation_validity_s)},
+                      {"attestation_clock_skew_s", std::to_string(p.attestation_clock_skew_s)},
+                      {"max_claims_per_subject_per_epoch", p.max_claims_per_subject_per_epoch}};
+    root["accounts"] = json::array();
+    for (const auto& a : g.accounts) {
+        root["accounts"].push_back(
+            {{"address", crypto::encode_address(hrp, a.account_id)}, {"balance", std::to_string(a.balance)}});
+    }
+    root["validators"] = json::array();
+    for (const auto& v : g.validators) {
+        root["validators"].push_back({{"consensus_pubkey", to_hex(v.consensus_pubkey)},
+                                      {"power", std::to_string(v.power)},
+                                      {"reward_account", crypto::encode_address(hrp, v.reward_account)},
+                                      {"name", v.name}});
+    }
+    root["issuers"] = json::array();
+    for (const auto& is : g.issuers) {
+        json keys = json::array();
+        for (const auto& k : is.keys) keys.push_back({{"key_id", k.key_id}, {"pubkey", to_hex(k.pubkey)}, {"status", k.status}});
+        root["issuers"].push_back({{"issuer_id", is.issuer_id},
+                                   {"name", is.name},
+                                   {"status", is.status},
+                                   {"epoch_budget", std::to_string(is.epoch_budget)},
+                                   {"keys", keys}});
+    }
+    root["achievements"] = json::array();
+    for (const auto& a : g.achievements) {
+        root["achievements"].push_back({{"issuer_id", a.issuer_id},
+                                        {"achievement_id", a.achievement_id},
+                                        {"reward", std::to_string(a.reward)},
+                                        {"policy", a.policy},
+                                        {"max_per_epoch", a.max_per_epoch},
+                                        {"status", a.status}});
+    }
+    return root.dump(2) + "\n";
+}
+
 // ------------------------------------------------------------------ initial state (§11.4)
 
 void write_initial_state(const Genesis& g, state::Overlay& out) {

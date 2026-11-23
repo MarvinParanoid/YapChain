@@ -53,6 +53,10 @@ if(YAP_BUILD_TESTS)
   # CLI tests drive the real `yap` binary as a subprocess.
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME cli:keys COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_keys_cli.py $<TARGET_FILE:yap>)
+  add_executable(yap_test_corrupt tools/corrupt_store.cpp)
+  target_link_libraries(yap_test_corrupt PRIVATE yap_test_support)
+  yap_target_warnings(yap_test_corrupt)
+  add_test(NAME cli:dev COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_dev_cli.py $<TARGET_FILE:yap> $<TARGET_FILE:yap_test_corrupt>)
   add_test(NAME cli:tx COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_tx_cli.py $<TARGET_FILE:yap>)
 
   # Crash-recovery tests fork child processes that are killed with SIGKILL.
