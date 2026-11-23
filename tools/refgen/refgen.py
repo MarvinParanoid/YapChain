@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bech32m_ref as b32  # noqa: E402
 import ed25519_ref as ed  # noqa: E402
+import tx_ref  # noqa: E402
+from ycs_ref import DecodeError  # noqa: E402
 import ycs_ref as ycs  # noqa: E402
 
 U64_MAX = 2**64 - 1
@@ -421,6 +423,93 @@ def gen_addresses():
     return {"hrp": hrp, "keys": keys, "system_accounts": system, "decode": cases}
 
 
+# --------------------------------------------------------------------------- transactions
+CHAIN_ID = "yapchain-testnet-1"
+
+
+def _json_body(body):
+    """JSON form of a body used by the C++ vector test to rebuild the transaction."""
+    p = body["payload"]
+    out = {"version": body["version"], "chain_id": body["chain_id"], "nonce": str(body["nonce"]),
+           "fee": str(body["fee"]), "expires_at_height": str(body["expires_at_height"]), "memo": hx(body["memo"])}
+    if p["type"] == "transfer":
+        out["payload"] = {"type": "transfer", "to": hx(p["to"]), "amount": str(p["amount"])}
+    elif p["type"] == "burn":
+        out["payload"] = {"type": "burn", "amount": str(p["amount"])}
+    else:
+        a = p["attestation"]
+        out["payload"] = {"type": "claim", "issuer_signature": hx(p["issuer_signature"]), "attestation": {
+            "version": a["version"], "chain_id": a["chain_id"], "issuer_id": a["issuer_id"], "key_id": a["key_id"],
+            "achievement_id": a["achievement_id"], "subject": hx(a["subject"]), "claim_id": hx(a["claim_id"]),
+            "evidence_hash": hx(a["evidence_hash"]), "issued_at_s": str(a["issued_at_s"]),
+            "expires_at_s": str(a["expires_at_s"])}}
+    return out
+
+
+def make_body(seed_bytes, payload, nonce=0, fee=1000, expires=100, memo=b"", chain_id=CHAIN_ID, version=1):
+    return {"version": version, "chain_id": chain_id, "sender_pubkey": ed.public_key(seed_bytes), "nonce": nonce,
+            "fee": fee, "expires_at_height": expires, "memo": memo, "payload": payload}
+
+
+def gen_tx():
+    s0, s1, issuer = seed(0), seed(1), seed(50)
+    to = account_id(ed.public_key(s1))
+    att = {"version": 1, "chain_id": CHAIN_ID, "issuer_id": 7, "key_id": 0, "achievement_id": 42,
+           "subject": account_id(ed.public_key(s0)), "claim_id": bytes(range(16)), "evidence_hash": b"\x00" * 32,
+           "issued_at_s": 1767225600, "expires_at_s": 1767225600 + 86400}
+    claim = {"type": "claim", "attestation": att, "issuer_signature": tx_ref.sign_attestation(att, issuer)}
+    cases = [
+        ("transfer", make_body(s0, {"type": "transfer", "to": to, "amount": 1_500_000})),
+        ("transfer_max_values", make_body(s0, {"type": "transfer", "to": to, "amount": 2**64 - 1},
+                                          nonce=2**64 - 1, fee=2**64 - 1, expires=2**64 - 1, memo=b"\xff" * 1024)),
+        ("burn_with_memo", make_body(s1, {"type": "burn", "amount": 7}, nonce=3, memo="мем 🐸".encode())),
+        ("claim", make_body(s0, claim, nonce=1)),
+    ]
+    encode = []
+    for name, body in cases:
+        signer = s0 if body["sender_pubkey"] == ed.public_key(s0) else s1
+        txb = tx_ref.sign_tx(body, signer)
+        assert tx_ref.decode_tx(txb) == (body, txb[-64:])
+        encode.append({"name": name, "seed": hx(signer), "body": _json_body(body),
+                       "sender_account_id": hx(account_id(body["sender_pubkey"])),
+                       "body_hex": hx(tx_ref.encode_body(body)), "signature": hx(txb[-64:]),
+                       "tx_hex": hx(txb), "tx_id": hx(tx_ref.tx_id(txb))})
+    encode[3]["issuer_seed"] = hx(issuer)
+
+    good = bytes.fromhex(encode[0]["tx_hex"])
+    body0 = make_body(s0, {"type": "transfer", "to": to, "amount": 1})
+
+    def raw(body, sig=b"\x00" * 64):
+        return tx_ref.encode_body(body) + sig
+
+    def with_tag(tag):
+        b = tx_ref.encode_body(make_body(s0, {"type": "burn", "amount": 1}))
+        return b[:-9] + bytes([tag]) + b[-8:] + b"\x00" * 64
+
+    invalid = [
+        ("empty", b""),
+        ("truncated_signature", good[:-1]),
+        ("trailing_byte", good + b"\x00"),
+        ("payload_tag_3_reserved", with_tag(3)),
+        ("payload_tag_0x10_admin", with_tag(0x10)),
+        ("payload_tag_0xff", with_tag(0xFF)),
+        ("chain_id_uppercase", raw(dict(body0, chain_id="YAPCHAIN"))),
+        ("chain_id_leading_dash", raw(dict(body0, chain_id="-yap"))),
+        ("chain_id_empty", raw(dict(body0, chain_id=""))),
+        ("chain_id_33_bytes", raw(dict(body0, chain_id="a" * 33))),
+        ("memo_1025_bytes", raw(dict(body0, memo=b"m" * 1025))),
+        ("attestation_bad_chain_id", raw(make_body(s0, dict(claim, attestation=dict(att, chain_id="Bad"))))),
+    ]
+    decode_invalid = []
+    for name, data in invalid:
+        try:
+            tx_ref.decode_tx(data)
+            raise AssertionError("accepted " + name)
+        except DecodeError as e:
+            decode_invalid.append({"name": name, "hex": hx(data), "error": str(e)})
+    return {"chain_id": CHAIN_ID, "encode": encode, "decode_invalid": decode_invalid}
+
+
 # --------------------------------------------------------------------------- main
 def write(out_dir, name, obj):
     path = os.path.join(out_dir, name)
@@ -442,6 +531,7 @@ def main():
     write(args.out, "ed25519.json", gen_ed25519())
     write(args.out, "bech32m.json", gen_bech32m())
     write(args.out, "address.json", gen_addresses())
+    write(args.out, "tx.json", gen_tx())
     return 0
 
 

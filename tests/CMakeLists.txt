@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 add_library(yap_test_support INTERFACE)
 target_include_directories(yap_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/support)
-target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto)
+target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx)
 
 if(YAP_BUILD_TESTS)
   include(Catch)
@@ -12,19 +12,22 @@ if(YAP_BUILD_TESTS)
     unit/hash_test.cpp
     unit/ed25519_test.cpp
     unit/bech32m_test.cpp
-    unit/address_test.cpp)
+    unit/address_test.cpp
+    unit/tx_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
 
-  add_executable(yap_vector_tests vectors/vectors_test.cpp)
+  add_executable(yap_vector_tests
+    vectors/vectors_test.cpp
+    vectors/tx_vectors_test.cpp)
   target_link_libraries(yap_vector_tests PRIVATE yap_test_support nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
   target_compile_definitions(yap_vector_tests PRIVATE YAP_TEST_VECTORS_DIR="${PROJECT_SOURCE_DIR}/test-vectors")
   yap_target_warnings(yap_vector_tests)
   catch_discover_tests(yap_vector_tests TEST_PREFIX "vectors:")
 
   # Deterministic mutation smoke run of the fuzz targets; works with GCC (no libFuzzer needed).
-  add_executable(yap_fuzz_smoke fuzz/fuzz_smoke_main.cpp fuzz/fuzz_ycs.cpp fuzz/fuzz_bech32m.cpp)
+  add_executable(yap_fuzz_smoke fuzz/fuzz_smoke_main.cpp fuzz/fuzz_ycs.cpp fuzz/fuzz_bech32m.cpp fuzz/fuzz_tx.cpp)
   target_compile_definitions(yap_fuzz_smoke PRIVATE YAP_FUZZ_SMOKE=1)
   target_link_libraries(yap_fuzz_smoke PRIVATE yap_test_support)
   yap_target_warnings(yap_fuzz_smoke)
@@ -35,7 +38,7 @@ if(YAP_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(FATAL_ERROR "YAP_FUZZ requires Clang (libFuzzer)")
   endif()
-  foreach(target IN ITEMS ycs bech32m)
+  foreach(target IN ITEMS ycs bech32m tx)
     add_executable(fuzz_${target} fuzz/fuzz_${target}.cpp)
     target_link_libraries(fuzz_${target} PRIVATE yap_test_support)
     target_compile_options(fuzz_${target} PRIVATE -fsanitize=fuzzer,address,undefined)

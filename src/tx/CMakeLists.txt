@@ -1,0 +1,5 @@
+add_library(yap_tx STATIC transaction.cpp)
+add_library(yap::tx ALIAS yap_tx)
+target_include_directories(yap_tx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(yap_tx PUBLIC yap::codec yap::crypto)
+yap_target_warnings(yap_tx)

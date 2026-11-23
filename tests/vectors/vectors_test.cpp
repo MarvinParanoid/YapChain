@@ -10,6 +10,7 @@
 #include <string>
 
 #include "sample.hpp"
+#include "vector_util.hpp"
 #include "yap/common/checked.hpp"
 #include "yap/common/hex.hpp"
 #include "yap/crypto/address.hpp"
@@ -19,41 +20,16 @@
 #include "yap/crypto/hash.hpp"
 
 using namespace yap;
-using json = nlohmann::json;
+
+using test::json;
 
 namespace {
-
-json load(const std::string& name) {
-    std::ifstream in(std::string(YAP_TEST_VECTORS_DIR) + "/" + name);
-    if (!in) {
-        throw std::runtime_error("cannot open test vector file " + name);
-    }
-    json doc = json::parse(in);
-    REQUIRE(doc.at("version") == 1);
-    return doc.at("vectors");
-}
-
-Bytes hex(const json& j) {
-    auto b = from_hex(j.get<std::string>());
-    if (!b) {
-        throw std::runtime_error("bad hex in vectors");
-    }
-    return *b;
-}
-
+json load(const std::string& name) { return test::load_vectors(name); }
+Bytes hex(const json& j) { return test::jhex(j); }
 template <std::size_t N>
-FixedBytes<N> hexn(const json& j) {
-    auto b = from_hex_fixed<N>(j.get<std::string>());
-    if (!b) {
-        throw std::runtime_error("bad fixed hex in vectors");
-    }
-    return *b;
-}
-
-std::uint64_t u64(const json& j) { return std::stoull(j.get<std::string>()); }
-
-std::string str(ByteView b) { return {reinterpret_cast<const char*>(b.data()), b.size()}; }
-
+FixedBytes<N> hexn(const json& j) { return test::jhexn<N>(j); }
+std::uint64_t u64(const json& j) { return test::ju64(j); }
+std::string str(ByteView b) { return test::as_string(b); }
 }  // namespace
 
 TEST_CASE("sha256 vectors", "[vectors][sha256]") {
