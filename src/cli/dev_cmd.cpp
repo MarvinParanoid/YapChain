@@ -83,6 +83,23 @@ void register_dev(CLI::App& app, Context& ctx) {
     i->callback([&ctx, init] {
         const auto g = load_genesis(init->first);
         crypto::PublicKey producer{};
+        // An existing chain is never re-initialised, and never gets a fresh producer key.
+        if (std::filesystem::exists(ctx.data_dir() / "data.mdb")) {
+            auto existing = open_store(ctx, true, false);
+            chain::Engine probe(*existing);
+            if (probe.initialized()) {
+                const auto raw = existing->get(storage::Table::Meta, dev::dev_config_key());
+                const auto cfg = raw ? ycs::decode<dev::DevConfig>(*raw) : Result<dev::DevConfig, ycs::DecodeError>(
+                                                                            unexpected(ycs::DecodeError::Truncated));
+                if (!cfg || probe.meta().genesis_hash != chain::genesis_hash(g)) {
+                    throw CliError(kExitRejected, "the local database already holds a different chain");
+                }
+                if (init->second.empty() && !std::filesystem::exists(ctx.producer_key_path())) {
+                    // Import-only node, or the key was moved away: do not invent a new producer.
+                    init->second = to_hex(cfg->producer);
+                }
+            }
+        }
         if (!init->second.empty()) {
             auto pk = from_hex_fixed<32>(init->second);
             if (!pk) throw CliError(kExitRejected, "--producer-pubkey must be 64 lowercase hex characters");

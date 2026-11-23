@@ -97,3 +97,13 @@ TEST_CASE("decoder enforces ceilings before allocation", "[tx]") {
     evil[memo_len_pos] = evil[memo_len_pos + 1] = evil[memo_len_pos + 2] = evil[memo_len_pos + 3] = 0xFF;
     CHECK(tx::decode_signed_tx(evil).error() == ycs::DecodeError::LengthLimit);
 }
+
+TEST_CASE("signing refuses bodies the strict decoder would reject", "[tx][audit]") {
+    const auto k = key(8);
+    auto body = transfer_body(k);
+    body.chain_id = "Bad Id";
+    CHECK_THROWS_AS(tx::sign_tx(body, k), std::invalid_argument);
+    tx::Attestation att;
+    att.chain_id = "UPPER";
+    CHECK_THROWS_AS(tx::sign_attestation(att, k), std::invalid_argument);
+}

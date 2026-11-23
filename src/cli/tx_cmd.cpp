@@ -4,11 +4,13 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <memory>
 
 #include "commands.hpp"
 #include "local_chain.hpp"
 #include "yap/common/hex.hpp"
+#include "yap/tx/chain_id.hpp"
 #include "yap/crypto/domains.hpp"
 #include "yap/tx/stateless.hpp"
 #include "yap/wallet/amount.hpp"
@@ -72,10 +74,12 @@ tx::TxBody build_body(const Context& ctx, const BuildArgs& a) {
 
     // Missing chain id / nonce / expiry / fee come from the local chain, if there is one.
     const bool need_local = a.chain_id.empty() || !n.nonce || !n.expires;
-    std::optional<LocalChain> local;
-    if (need_local) local = open_local_chain(ctx, /*read_only=*/true, /*required=*/false);
+    std::optional<LocalChain> local = open_local_chain(ctx, /*read_only=*/true, /*required=*/false);
     if (need_local && !local) {
         throw CliError(kExitRejected, "no local chain: pass --chain-id, --nonce and --expires explicitly");
+    }
+    if (!a.chain_id.empty() && !tx::is_valid_chain_id(a.chain_id)) {
+        throw CliError(kExitRejected, "invalid --chain-id (allowed: [a-z0-9-], 1..32, no leading/trailing '-')");
     }
     b.chain_id = a.chain_id.empty() ? local->engine->info().chain_id : a.chain_id;
     if (n.nonce) {
@@ -83,7 +87,12 @@ tx::TxBody build_body(const Context& ctx, const BuildArgs& a) {
     } else {
         b.nonce = local->account(b.sender()).value_or(state::AccountState{}).nonce;
     }
-    b.expires_at_height = n.expires ? *n.expires : local->engine->info().last_height + kDefaultExpiryWindow;
+    if (n.expires) {
+        b.expires_at_height = *n.expires;
+    } else {  // within the chain's TTL limit (T2), never more than the default window
+        b.expires_at_height = local->engine->info().last_height +
+                              std::min<std::uint64_t>(kDefaultExpiryWindow, local->params().max_tx_ttl_blocks);
+    }
     if (!a.fee.empty()) {
         b.fee = amount_or_fail(a.fee, "fee");
     } else {
@@ -128,10 +137,20 @@ void print_body(const tx::TxBody& b) {
         out("amount", wallet::format_amount(t->amount));
     } else if (const auto* bn = std::get_if<tx::Burn>(&b.payload)) {
         out("amount", wallet::format_amount(bn->amount));
-    } else {
-        const auto& a = std::get<tx::ClaimAchievement>(b.payload).attestation.attestation;
+    } else {  // every signed field of the attestation is shown before signing
+        const auto& c = std::get<tx::ClaimAchievement>(b.payload).attestation;
+        const auto& a = c.attestation;
+        out("attestation_version", a.version);
+        out("attestation_chain_id", a.chain_id);
         out("issuer_id", a.issuer_id);
+        out("key_id", a.key_id);
         out("achievement_id", a.achievement_id);
+        out("subject", crypto::encode_address(crypto::kTestnetHrp, a.subject));
+        out("claim_id", to_hex(a.claim_id));
+        out("evidence_hash", to_hex(a.evidence_hash));
+        out("issued_at_s", a.issued_at_s);
+        out("expires_at_s", a.expires_at_s);
+        out("issuer_signature", to_hex(c.issuer_signature));
     }
     out("memo_hex", to_hex(b.memo));
 }

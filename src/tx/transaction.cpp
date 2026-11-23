@@ -62,6 +62,7 @@ SignedAttestation SignedAttestation::decode_from(ycs::Reader& r) {
 }
 
 SignedAttestation sign_attestation(const Attestation& attestation, const crypto::SecretKey& issuer_key) {
+    if (!is_valid_chain_id(attestation.chain_id)) throw std::invalid_argument("sign_attestation: invalid chain_id");
     return {attestation, issuer_key.sign_prefixed(crypto::sign_prefix::kAttestation, ycs::encode(attestation))};
 }
 
@@ -146,6 +147,11 @@ SignedTx SignedTx::decode_from(ycs::Reader& r) {
 }
 
 SignedTx sign_tx(TxBody body, const crypto::SecretKey& sender_key) {
+    // Never sign something the strict decoder would refuse (protocol.md §2, §3.3).
+    if (!is_valid_chain_id(body.chain_id)) throw std::invalid_argument("sign_tx: invalid chain_id");
+    if (const auto* c = std::get_if<ClaimAchievement>(&body.payload); c && !is_valid_chain_id(c->attestation.attestation.chain_id)) {
+        throw std::invalid_argument("sign_tx: invalid attestation chain_id");
+    }
     if (body.sender_pubkey != sender_key.public_key()) {
         throw std::invalid_argument("sign_tx: sender_pubkey does not match the signing key");
     }

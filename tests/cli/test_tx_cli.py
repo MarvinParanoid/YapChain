@@ -103,6 +103,9 @@ def main(yap):
                     "--nonce", "0", "--expires", "50", "--out", f("x.hex")]
             args[args.index(opt) + 1] = val
             cli.run(*args, expect=2)
+        for bad_chain in ("Bad Id", "x\nnonce: 999", "-yap", "a" * 33):
+            cli.run("tx", "transfer", "--from", "alice", "--to", bob["address"], "--amount", "1", "--chain-id", bad_chain,
+                    "--nonce", "0", "--expires", "50", "--out", f("x.hex"), expect=2)
         cli.run("tx", "transfer", "--from", "alice", "--to", bob["address"], "--amount", "007", *common,
                 "--out", f("x.hex"), expect=2)  # leading zeros in amounts
         cli.run("tx", "transfer", "--from", "alice", "--to", alice["address"], "--amount", "1", *common,

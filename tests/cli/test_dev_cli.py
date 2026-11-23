@@ -99,6 +99,29 @@ def main(yap, corrupt):
         check(roots_a == roots_b, "replayed roots equal the original chain")
         check(b.kv("query", "chain") == chain_a, "replayed chain summary equal")
 
+        # dev init on an import-only node never creates a producer key (audit M1.5).
+        check(not os.path.exists(os.path.join(f("home-b"), "dev", "producer.json")), "import-only node has no key")
+        check(b.kv("dev", "init", "--genesis", f("genesis.json"))["created"].startswith("no"), "re-init is a no-op")
+        check(not os.path.exists(os.path.join(f("home-b"), "dev", "producer.json")), "no stray producer key")
+
+        # Defaults follow the local chain's parameters (audit M1.5): TTL limit and min_fee.
+        import json as _json
+        gdoc = _json.load(open(f("genesis.json")))
+        gdoc["params"]["max_tx_ttl_blocks"] = "10"
+        gdoc["params"]["min_fee"] = "5000"
+        open(f("genesis-params.json"), "w").write(_json.dumps(gdoc))
+        p = Cli(yap, f("home-params"), pw)
+        p.run("keys", "create", "alice")
+        gdoc["accounts"] = [{"address": p.kv("keys", "show", "alice")["address"], "balance": "50000000"}]
+        open(f("genesis-params.json"), "w").write(_json.dumps(gdoc))
+        p.run("dev", "init", "--genesis", f("genesis-params.json"))
+        t = p.kv("tx", "transfer", "--from", "alice", "--to", bob, "--amount", "1", "--out", f("p1.hex"))
+        check(t["expires_at_height"] == "10" and t["fee"] == "0.005000 YAP (5000 yip)", f"local defaults: {t}")
+        t = p.kv("tx", "transfer", "--from", "alice", "--to", bob, "--amount", "1", "--chain-id", gdoc["chain_id"],
+                 "--nonce", "0", "--expires", "5", "--out", f("p2.hex"))
+        check(t["fee"] == "0.005000 YAP (5000 yip)", "min_fee of the local chain even with explicit values")
+        p.run("dev", "produce", "--tx", f("p1.hex"), "--require-all")
+
         # Concurrent writers (audit M1.5): two imports of competing height-2 blocks at the same time
         # must never both succeed, and the database must stay consistent.
         a.run("tx", "transfer", "--from", "alice", "--to", bob, "--amount", "77", "--out", f("race.hex"))
