@@ -84,6 +84,9 @@ std::optional<merkle::SmtNode> StoreNodeReader::node(const Hash32& hash) const {
     if (!raw) return std::nullopt;
     auto n = merkle::decode_node(*raw);
     if (!n) throw merkle::SmtCorruption("undecodable SMT node " + to_hex(hash));
+    // LMDB has no page checksums (ADR-0022): a damaged node that still decodes must not be used to
+    // build new nodes and a wrong state root. One hash per loaded node (O(depth) per update).
+    if (merkle::node_hash(*n) != hash) throw merkle::SmtCorruption("SMT node does not match its hash " + to_hex(hash));
     return n;
 }
 

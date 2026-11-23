@@ -333,3 +333,20 @@ TEST_CASE("a store stays readable after a block with more than 100 000 transacti
     CHECK(e.info().last_height == 1);
     CHECK(e.block_record(1)->codes.size() == 100'001);
 }
+
+TEST_CASE("a damaged SMT node on the update path is detected, not used", "[engine][audit]") {
+    // Audit M1.5: nodes were only decoded, not hash-checked, when loaded for an update; a decodable
+    // bit flip produced wrong new nodes and a wrong committed root.
+    const auto g = genesis();
+    storage::MemoryStore store;
+    chain::Engine e(store);
+    const Hash32 root = e.init_chain(g);
+    auto raw = store.get(storage::Table::Smt, root).value();  // the root node is on every path
+    raw[40] ^= 1;  // still 65 bytes with a valid tag: decodes fine
+    storage::WriteBatch b;
+    b.put(storage::Table::Smt, Bytes(root.begin(), root.end()), raw);
+    store.write(b);
+    CHECK_THROWS_AS(e.finalize_block(ctx(g, 1, {transfer_tx(kAlice, id_of(kBob), 1, 0)})), merkle::SmtCorruption);
+    CHECK_FALSE(e.has_pending());
+    CHECK(e.info().last_height == 0);
+}
