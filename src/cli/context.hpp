@@ -52,6 +52,9 @@ struct Context {
 /// line from stdin. Passwords are never taken from the command line itself.
 [[nodiscard]] std::string read_password(const Context& ctx, std::string_view prompt, bool confirm);
 
+/// Overwrites a password held in a std::string before it is released.
+void wipe(std::string& secret) noexcept;
+
 /// One "key: value" line on stdout (stable, machine-friendly output).
 void out(std::string_view key, std::string_view value);
 void out(std::string_view key, std::uint64_t value);

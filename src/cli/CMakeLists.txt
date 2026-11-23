@@ -1,3 +1,3 @@
 add_executable(yap main.cpp context.cpp keys_cmd.cpp local_chain.cpp tx_cmd.cpp genesis_cmd.cpp dev_cmd.cpp query_cmd.cpp)
-target_link_libraries(yap PRIVATE yap::chain yap::dev yap::wallet yap::cli11)
+target_link_libraries(yap PRIVATE yap::chain yap::dev yap::wallet yap::cli11 yap::sodium)
 yap_target_warnings(yap)

@@ -13,7 +13,8 @@ JSON с полями ровно из §5.6 плюс два открытых по
 
 - Seed (32 байта) из CSPRNG ОС, хранится только в памяти `sodium_malloc`, шифруется XChaCha20-Poly1305 ключом
   Argon2id (`crypto_pwhash`, уровень MODERATE в CLI).
-- **AAD** = `"YAPCHAIN/KEYSTORE/V1\0" ‖ purpose ‖ u64 opslimit ‖ u64 memlimit ‖ salt ‖ public_key`:
+- **AAD** = `"YAPCHAIN/KEYSTORE/V1\0" ‖ u8 purpose ‖ u64 opslimit ‖ u64 memlimit ‖ salt ‖ public_key`, где
+  `purpose` — байт `1` (`account`) или `2` (`dev-producer`), целые — little-endian (уточнено по итогам аудита M1.5):
   подмена любого открытого поля ломает расшифровку. `address` проверяется как производное от `public_key`.
 - Параметры KDF принимаются только в диапазоне INTERACTIVE…SENSITIVE (защита от ослабленных файлов и от DoS).
 - Неверный пароль и повреждённый шифротекст неразличимы (`wrong password or corrupted keystore`); чтение

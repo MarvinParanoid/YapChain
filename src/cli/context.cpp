@@ -7,10 +7,13 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
+
+#include <sodium.h>
 
 #include "yap/common/hex.hpp"
 #include "yap/wallet/keystore.hpp"
@@ -37,11 +40,23 @@ std::string strip_newline(std::string s) {
     return s;
 }
 
+termios g_saved_termios{};
+volatile std::sig_atomic_t g_echo_disabled = 0;
+
+extern "C" void restore_echo_and_exit(int sig) {
+    if (g_echo_disabled != 0) ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &g_saved_termios);
+    ::_exit(128 + sig);  // async-signal-safe
+}
+
 std::string read_tty_line(std::string_view prompt) {
     std::cerr << prompt << std::flush;
     termios old{};
     const bool tty = ::tcgetattr(STDIN_FILENO, &old) == 0;
     if (tty) {
+        g_saved_termios = old;
+        g_echo_disabled = 1;
+        std::signal(SIGINT, restore_echo_and_exit);  // Ctrl-C must not leave the terminal without echo
+        std::signal(SIGTERM, restore_echo_and_exit);
         termios silent = old;
         silent.c_lflag &= ~static_cast<tcflag_t>(ECHO);
         ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &silent);
@@ -50,6 +65,9 @@ std::string read_tty_line(std::string_view prompt) {
     std::getline(std::cin, line);
     if (tty) {
         ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+        g_echo_disabled = 0;
+        std::signal(SIGINT, SIG_DFL);
+        std::signal(SIGTERM, SIG_DFL);
         std::cerr << "\n";
     }
     return strip_newline(line);
@@ -80,6 +98,11 @@ std::string read_password(const Context& ctx, std::string_view prompt, bool conf
     }
     if (pw.empty()) throw CliError(kExitAuth, "empty password");
     return pw;
+}
+
+void wipe(std::string& secret) noexcept {
+    if (!secret.empty()) sodium_memzero(secret.data(), secret.size());
+    secret.clear();
 }
 
 void out(std::string_view key, std::string_view value) { std::cout << key << ": " << value << "\n"; }

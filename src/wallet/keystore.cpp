@@ -253,17 +253,47 @@ bool valid_key_name(std::string_view name) noexcept {
     return true;
 }
 
+namespace {
+
+/// The key directory must be a real directory (not a symlink) owned by us and closed to others.
+void check_private_dir(const std::filesystem::path& dir) {
+    struct stat st {};
+    if (::lstat(dir.c_str(), &st) != 0) throw std::runtime_error(dir.string() + ": " + std::strerror(errno));
+    if (S_ISLNK(st.st_mode)) throw std::runtime_error(dir.string() + " is a symlink; refusing to use it for keys");
+    if (!S_ISDIR(st.st_mode)) throw std::runtime_error(dir.string() + " is not a directory");
+    if (st.st_uid != ::geteuid()) throw std::runtime_error(dir.string() + " is owned by another user");
+    if ((st.st_mode & 077) != 0) {
+        throw std::runtime_error(dir.string() + ": permissions too open (must be 0700)");
+    }
+}
+
+}  // namespace
+
 void write_private_file(const std::filesystem::path& path, std::string_view content) {
+    crypto::ensure_initialized();
     const auto dir = path.parent_path();
+    struct stat lst {};
+    if (::lstat(dir.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        throw std::runtime_error(dir.string() + " is a symlink; refusing to use it for keys");
+    }
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     if (ec) throw std::runtime_error("cannot create " + dir.string() + ": " + ec.message());
     std::filesystem::permissions(dir, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, ec);
-    if (std::filesystem::exists(path)) throw std::runtime_error(path.string() + " already exists");
+    if (ec) throw std::runtime_error("cannot restrict " + dir.string() + " to 0700: " + ec.message());
+    check_private_dir(dir);
 
-    const auto tmp = path.string() + ".tmp-" + std::to_string(::getpid());
-    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (fd < 0) throw std::runtime_error("cannot create " + tmp + ": " + std::strerror(errno));
+    // Random temporary name: a crash can leave a stale temp file without blocking later writes.
+    int fd = -1;
+    std::string tmp;
+    for (int attempt = 0; attempt < 16 && fd < 0; ++attempt) {
+        FixedBytes<8> rnd{};
+        randombytes_buf(rnd.data(), rnd.size());
+        tmp = path.string() + ".tmp-" + to_hex(rnd);
+        fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (fd < 0 && errno != EEXIST) break;
+    }
+    if (fd < 0) throw std::runtime_error("cannot create a temporary file next to " + path.string() + ": " + std::strerror(errno));
     std::size_t done = 0;
     while (done < content.size()) {
         const auto n = ::write(fd, content.data() + done, content.size() - done);
@@ -279,7 +309,7 @@ void write_private_file(const std::filesystem::path& path, std::string_view cont
         ::unlink(tmp.c_str());
         throw std::runtime_error("cannot sync " + tmp);
     }
-    // link() fails if the target exists: an existing key is never overwritten.
+    // link() fails if the target exists (even as a dangling symlink): a key is never overwritten.
     if (::link(tmp.c_str(), path.c_str()) != 0) {
         const int err = errno;
         ::unlink(tmp.c_str());
@@ -294,16 +324,39 @@ void write_private_file(const std::filesystem::path& path, std::string_view cont
 }
 
 std::string read_private_file(const std::filesystem::path& path) {
+    check_private_dir(path.parent_path());
+    // O_NOFOLLOW: no symlink tricks; O_NONBLOCK: a FIFO cannot hang us. All checks are done on the
+    // descriptor that is actually read (no stat-then-open race).
+    const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) throw std::runtime_error(path.string() + ": " + std::strerror(errno));
     struct stat st {};
-    if (::stat(path.c_str(), &st) != 0) throw std::runtime_error(path.string() + ": " + std::strerror(errno));
-    if ((st.st_mode & 077) != 0) {
-        throw std::runtime_error(path.string() + ": permissions too open (must not be accessible by group/others)");
+    std::string err;
+    if (::fstat(fd, &st) != 0) {
+        err = std::strerror(errno);
+    } else if (!S_ISREG(st.st_mode)) {
+        err = "not a regular file";
+    } else if (st.st_uid != ::geteuid()) {
+        err = "owned by another user";
+    } else if ((st.st_mode & 077) != 0) {
+        err = "permissions too open (must not be accessible by group/others)";
+    } else if (st.st_size > 64 * 1024) {
+        err = "too large for a keystore";
     }
-    std::ifstream in(path, std::ios::binary);
-    std::stringstream ss;
-    ss << in.rdbuf();
-    if (!in) throw std::runtime_error("cannot read " + path.string());
-    return ss.str();
+    if (!err.empty()) {
+        ::close(fd);
+        throw std::runtime_error(path.string() + ": " + err);
+    }
+    std::string out(static_cast<std::size_t>(st.st_size), '\0');
+    std::size_t done = 0;
+    while (done < out.size()) {
+        const auto n = ::read(fd, out.data() + done, out.size() - done);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        done += static_cast<std::size_t>(n);
+    }
+    ::close(fd);
+    out.resize(done);
+    return out;
 }
 
 }  // namespace yap::wallet

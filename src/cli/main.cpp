@@ -3,6 +3,8 @@
 // yap — YapChain command-line tool (M1: local wallet, transactions and dev-chain; no network).
 #include <CLI11.hpp>
 
+#include <sys/resource.h>
+
 #include <iostream>
 
 #include "commands.hpp"
@@ -14,6 +16,9 @@
 
 int main(int argc, char** argv) {
     using namespace yap::cli;
+    // Never write secrets (decrypted seeds, passwords) to a core dump.
+    const rlimit no_core{0, 0};
+    ::setrlimit(RLIMIT_CORE, &no_core);
     CLI::App app{"yap — YapChain local tool. The economy is real, the value is questionable.\n"
                  "Exit codes: 0 ok, 1 usage, 2 rejected/invalid, 3 storage, 4 authentication, 5 internal."};
     app.require_subcommand(1);

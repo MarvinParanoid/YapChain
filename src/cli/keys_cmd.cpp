@@ -33,17 +33,22 @@ crypto::SecretKey unlock_key(const Context& ctx, const std::filesystem::path& pa
     } catch (const std::exception& e) {
         throw CliError(kExitAuth, e.what());
     }
-    const auto pw = read_password(ctx, "Password for " + path.filename().string() + ": ", false);
+    auto pw = read_password(ctx, "Password for " + path.filename().string() + ": ", false);
     auto key = wallet::unlock_keystore(json, pw, expected);
+    wipe(pw);
     if (!key) throw CliError(kExitAuth, path.string() + ": " + std::string(wallet::to_string(key.error())));
     return std::move(key).value();
 }
 
 wallet::KeyInfo create_key_file(const Context& ctx, const std::filesystem::path& path, wallet::KeyPurpose purpose) {
     if (std::filesystem::exists(path)) throw CliError(kExitRejected, path.string() + " already exists");
-    const auto pw = read_password(ctx, "New password: ", true);
-    if (pw.size() < 8) throw CliError(kExitAuth, "password must have at least 8 characters");
+    auto pw = read_password(ctx, "New password: ", true);
+    if (pw.size() < 8) {
+        wipe(pw);
+        throw CliError(kExitAuth, "password must have at least 8 characters");
+    }
     const auto k = wallet::create_keystore(pw, purpose, wallet::KdfParams::moderate());
+    wipe(pw);
     try {
         wallet::write_private_file(path, k.json);
     } catch (const std::exception& e) {

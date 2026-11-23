@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -124,4 +125,37 @@ TEST_CASE("private files: 0600, no overwrite, refuse open permissions", "[wallet
     CHECK_FALSE(valid_key_name("../alice"));
     CHECK_FALSE(valid_key_name("Alice"));
     CHECK_FALSE(valid_key_name(""));
+}
+
+TEST_CASE("key files: FIFOs, symlinks and open directories are refused", "[wallet][files][audit]") {
+    test::TempDir dir;
+    const auto keys = dir.path() / "keys";
+    write_private_file(keys / "alice.json", "alice");
+
+    // A FIFO used to make `keys show` hang forever (open without O_NONBLOCK, no S_ISREG check).
+    REQUIRE(::mkfifo((keys / "fifo.json").c_str(), 0600) == 0);
+    CHECK_THROWS(read_private_file(keys / "fifo.json"));
+    // Symlinked key files are not followed.
+    std::filesystem::create_symlink(keys / "alice.json", keys / "link.json");
+    CHECK_THROWS(read_private_file(keys / "link.json"));
+    // A key directory open to others is refused (anyone could swap public keys in it).
+    std::filesystem::permissions(keys, std::filesystem::perms::group_read | std::filesystem::perms::group_exec,
+                                 std::filesystem::perm_options::add);
+    CHECK_THROWS(read_private_file(keys / "alice.json"));
+    std::filesystem::permissions(keys, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+    CHECK(read_private_file(keys / "alice.json") == "alice");
+
+    // A symlinked key directory is never chmod-ed or written through.
+    const auto shared = dir.path() / "shared";
+    std::filesystem::create_directory(shared);
+    std::filesystem::permissions(shared, std::filesystem::perms::owner_all | std::filesystem::perms::group_read |
+                                             std::filesystem::perms::group_exec,
+                                 std::filesystem::perm_options::replace);
+    std::filesystem::create_directory_symlink(shared, dir.path() / "keys2");
+    CHECK_THROWS(write_private_file(dir.path() / "keys2" / "bob.json", "bob"));
+    CHECK((std::filesystem::status(shared).permissions() & std::filesystem::perms::group_read) != std::filesystem::perms::none);
+
+    // A stale temporary file from a crash (old pid-based name) does not block later writes.
+    std::ofstream(keys / ("carol.json.tmp-" + std::to_string(::getpid()))) << "stale";
+    CHECK_NOTHROW(write_private_file(keys / "carol.json", "carol"));
 }

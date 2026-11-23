@@ -51,8 +51,8 @@ struct KeyInfo {
     std::string address;
 };
 
-/// Creates a keystore document for a fresh seed from the OS CSPRNG. The secret key is returned
-/// so the caller can use it immediately; the seed itself never leaves guarded memory.
+/// Creates a keystore document for a fresh seed from the OS CSPRNG. Only the document and the
+/// public information are returned; the seed never leaves guarded memory.
 struct NewKey {
     std::string json;
     KeyInfo info;
@@ -68,10 +68,11 @@ struct NewKey {
 
 // ------------------------------------------------------------------ files
 
-/// Writes `content` to `path` atomically with mode 0600, refusing to overwrite an existing file.
-/// Throws std::runtime_error.
+/// Writes `content` to `path` atomically with mode 0600 in a 0700 directory owned by the user,
+/// refusing to overwrite an existing file or to use a symlinked directory. Throws std::runtime_error.
 void write_private_file(const std::filesystem::path& path, std::string_view content);
-/// Reads a key file; throws std::runtime_error if it is missing or accessible by group/others.
+/// Reads a key file; throws std::runtime_error unless it is a regular file (no symlink, FIFO, ...)
+/// owned by the user with no group/other access, in a 0700 directory owned by the user.
 [[nodiscard]] std::string read_private_file(const std::filesystem::path& path);
 
 /// Key names: [a-z0-9_-]{1,32}.
