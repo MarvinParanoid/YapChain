@@ -54,6 +54,30 @@ set_target_properties(yap_sodium PROPERTIES
 add_dependencies(yap_sodium yap_libsodium_build)
 add_library(yap::sodium ALIAS yap_sodium)
 
+# ------------------------------------------------------------------ LMDB 0.9.36
+# Official mirror github.com/LMDB/lmdb (OpenLDAP Public License 2.8). The 0.9 line is used
+# deliberately; the 1.0 line (new major, 2026) is not adopted yet (ADR-0022). Built from the two
+# C sources as a static library with default (durable) settings.
+set(YAP_LMDB_VERSION 0.9.36)
+set(YAP_LMDB_SHA256 7d55c3cbc1ef55f9b0076d3ddb16d0d9996d05b9caa7ca889ce10430ac677b90)
+yap_dep_url(_yap_lmdb_url "lmdb-${YAP_LMDB_VERSION}.tar.gz"
+  "https://github.com/LMDB/lmdb/archive/refs/tags/LMDB_${YAP_LMDB_VERSION}.tar.gz")
+FetchContent_Declare(lmdb
+  URL "${_yap_lmdb_url}"
+  URL_HASH SHA256=${YAP_LMDB_SHA256}
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  # The archive has no CMakeLists.txt there, so MakeAvailable only downloads and verifies it.
+  SOURCE_SUBDIR libraries/liblmdb)
+FetchContent_MakeAvailable(lmdb)
+set(_yap_lmdb_dir "${lmdb_SOURCE_DIR}/libraries/liblmdb")
+add_library(yap_lmdb STATIC "${_yap_lmdb_dir}/mdb.c" "${_yap_lmdb_dir}/midl.c")
+target_include_directories(yap_lmdb SYSTEM PUBLIC "${_yap_lmdb_dir}")
+find_package(Threads REQUIRED)
+target_link_libraries(yap_lmdb PUBLIC Threads::Threads)
+# Third-party C code: no project warnings; keep the compiler quiet about upstream style.
+target_compile_options(yap_lmdb PRIVATE -w)
+add_library(yap::lmdb ALIAS yap_lmdb)
+
 # ------------------------------------------------------------------ nlohmann/json 3.12.0
 # Used by the core only to parse the genesis JSON (protocol.md §11.3); never for hashing.
 set(YAP_JSON_VERSION 3.12.0)

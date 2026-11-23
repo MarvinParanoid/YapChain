@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 add_library(yap_test_support INTERFACE)
 target_include_directories(yap_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/support)
-target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx yap::state yap::chain)
+target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx yap::state yap::chain yap::storage)
 
 if(YAP_BUILD_TESTS)
   include(Catch)
@@ -19,7 +19,8 @@ if(YAP_BUILD_TESTS)
     unit/economics_test.cpp
     unit/merkle_test.cpp
     unit/genesis_test.cpp
-    unit/engine_test.cpp)
+    unit/engine_test.cpp
+    unit/storage_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")

@@ -1,0 +1,5 @@
+add_library(yap_storage STATIC store.cpp lmdb_store.cpp)
+add_library(yap::storage ALIAS yap_storage)
+target_include_directories(yap_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(yap_storage PUBLIC yap::common PRIVATE yap::lmdb)
+yap_target_warnings(yap_storage)
