@@ -16,6 +16,8 @@ namespace yap::dev {
 inline constexpr std::uint16_t kDevBlockVersion = 1;
 inline constexpr std::uint32_t kMaxDevBlockTxs = 10'000;      // protocol.md §3.3
 inline constexpr std::uint32_t kMaxDevBlockTxBytes = 65'536;  // protocol.md §3.3
+/// Upper bound for dev block times: the range CometBFT timestamps can express (protocol.md §9.1).
+inline constexpr std::uint64_t kMaxDevTimeMs = 9'223'372'036'854'775'807ULL;
 
 struct DevBlockHeader {
     std::uint16_t version = kDevBlockVersion;

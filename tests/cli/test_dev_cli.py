@@ -56,10 +56,15 @@ def main(yap, corrupt):
         out = a.run("dev", "produce", "--tx", f("stale.hex")).stdout
         check("excluded: " in out and "ERR_NONCE" in out, "excluded tx is reported with its code")
 
+        # Bad block times are rejected inputs (exit 2), never node failures, and never brick the chain.
+        out = a.run("dev", "produce", "--time-ms", "5", expect=2)
+        check("invalid block time" in out.stderr, "past time rejected as bad time")
+        a.run("dev", "produce", "--time-ms", "18446744073709551615", expect=2)
+        a.run("dev", "produce")  # still producing
         acct = a.kv("query", "account", alice)
-        check(acct["nonce"] == "3" and acct["height"] == "4", f"account after 4 blocks: {acct}")
+        check(acct["nonce"] == "3" and acct["height"] == "5", f"account after 5 blocks: {acct}")
         chain_a = a.kv("query", "chain")
-        roots_a = [a.kv("dev", "state-root", "--height", h)["state_root"] for h in range(5)]
+        roots_a = [a.kv("dev", "state-root", "--height", h)["state_root"] for h in range(6)]
         check(roots_a[0] == gh["initial_state_root"], "height 0 root == genesis root")
         check(a.kv("verify-state")["status"] == "ok", "verify-state ok")
 
@@ -83,8 +88,8 @@ def main(yap, corrupt):
             b.run("dev", "import", f("bad.hex"), expect=2)
             check(b.kv("query", "chain") == before, "tampered block leaves the state unchanged")
         r = b.kv("dev", "replay", "--journal", f("journal.hex"))
-        check(r["imported"] == "3" and r["skipped"] == "1", f"replay: {r}")
-        roots_b = [b.kv("dev", "state-root", "--height", h)["state_root"] for h in range(5)]
+        check(r["imported"] == "4" and r["skipped"] == "1", f"replay: {r}")
+        roots_b = [b.kv("dev", "state-root", "--height", h)["state_root"] for h in range(6)]
         check(roots_a == roots_b, "replayed roots equal the original chain")
         check(b.kv("query", "chain") == chain_a, "replayed chain summary equal")
 
@@ -93,15 +98,15 @@ def main(yap, corrupt):
         a.run("tx", "transfer", "--from", "alice", "--to", bob, "--amount", "77", "--out", f("race.hex"))
         alt = Cli(yap, f("home-alt"), pw)
         shutil.copytree(f("home-a"), f("home-alt"))
-        alt.run("dev", "produce", "--tx", f("race.hex"))  # a different block 5 on a copy of the chain
-        alt.run("dev", "block", "--height", "5", "--out", f("alt5.hex"))
+        alt.run("dev", "produce", "--tx", f("race.hex"))  # a different block 6 on a copy of the chain
+        alt.run("dev", "block", "--height", "6", "--out", f("alt5.hex"))
         a.run("dev", "produce")
-        a.run("dev", "block", "--height", "5", "--out", f("main5.hex"))
+        a.run("dev", "block", "--height", "6", "--out", f("main5.hex"))
         for i in range(12):
             race_home = f(f"race-{i}")
             shutil.copytree(f("home-b"), race_home)
             r = Cli(yap, race_home, pw)
-            r.run("dev", "replay", "--journal", f("journal.hex"))  # heights 1..4
+            r.run("dev", "replay", "--journal", f("journal.hex"))  # heights 1..5
             procs = [subprocess.Popen([yap, "--home", race_home, "dev", "import", blk], stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, text=True) for blk in (f("main5.hex"), f("alt5.hex"))]
             codes = [p.wait() for p in procs]

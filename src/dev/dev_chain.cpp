@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "yap/dev/dev_chain.hpp"
 
+#include "yap/common/checked.hpp"
 #include "yap/common/hex.hpp"
 #include "yap/merkle/merkle.hpp"
 #include "yap/state/state.hpp"
@@ -131,7 +132,7 @@ state::BlockResult DevChain::import(const DevBlock& b) {
     if (h.prev_block_hash != tip_hash()) throw reject(Reject::WrongParent, to_hex(h.prev_block_hash));
     state::Overlay view(&engine_.committed());
     const auto last_time = state::State(view).chain_state().last_time_ms;  // genesis time at height 0
-    if (h.height == 1 ? h.time_ms < last_time : h.time_ms <= last_time) {
+    if (h.time_ms > kMaxDevTimeMs || (h.height == 1 ? h.time_ms < last_time : h.time_ms <= last_time)) {
         throw reject(Reject::BadTime, std::to_string(h.time_ms) + " vs previous " + std::to_string(last_time));
     }
     // §3.3 limits: a block the decoder would refuse must never be committed (it could not be read back).
@@ -178,7 +179,18 @@ DevBlock DevChain::produce(const crypto::SecretKey& producer, const std::vector<
     DevBlock b;
     b.header.chain_id = info.chain_id;
     b.header.height = info.last_height + 1;
-    b.header.time_ms = time_ms ? *time_ms : last_time + 2'000;
+    if (time_ms) {
+        b.header.time_ms = *time_ms;
+    } else {
+        const auto t = checked_add(last_time, 2'000);
+        if (!t) throw BlockRejected(Reject::BadTime, "default time overflows");
+        b.header.time_ms = *t;
+    }
+    // Validate the time before executing: an invalid time is a rejected block, not a node failure.
+    if (b.header.time_ms > kMaxDevTimeMs ||
+        (b.header.height == 1 ? b.header.time_ms < last_time : b.header.time_ms <= last_time)) {
+        throw BlockRejected(Reject::BadTime, std::to_string(b.header.time_ms) + " vs previous " + std::to_string(last_time));
+    }
     b.header.prev_block_hash = tip_hash();
     b.header.producer_pubkey = producer.public_key();
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "yap/state/block.hpp"
 
+#include "yap/common/checked.hpp"
 #include "yap/common/hex.hpp"
 #include "yap/state/state_root.hpp"
 
@@ -13,7 +14,8 @@ BlockResult execute_block(Overlay& block_state, std::string_view chain_id, const
     // 1. Context.
     const ChainState before = st.chain_state();
     if (ctx.chain_id != chain_id) throw FailStop("block context: chain_id mismatch");
-    if (ctx.height != before.height + 1) throw FailStop("block context: height is not last_height + 1");
+    const auto expected_height = checked_add(before.height, 1);
+    if (!expected_height || ctx.height != *expected_height) throw FailStop("block context: height is not last_height + 1");
     if (ctx.time_ms < before.last_time_ms) throw FailStop("block context: time goes backwards");
     validate_last_commit(st, ctx.height, ctx.last_commit);
 

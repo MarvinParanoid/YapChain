@@ -236,3 +236,35 @@ TEST_CASE("dev import enforces the protocol size limits before committing", "[de
     CHECK(reject_reason(c, b) == Reject::LimitExceeded);
     CHECK(c.engine().info().last_height == 0);
 }
+
+TEST_CASE("produce validates the block time before executing it", "[dev][audit]") {
+    // Audit M1.5: a past time was reported as a node failure (FailStop) instead of BadTime, and a
+    // time near u64::MAX was accepted and made every later default time overflow.
+    const auto net = TestNet::make(5);
+    storage::MemoryStore store;
+    dev::DevChain::init(store, net.genesis, producer_key().public_key());
+    dev::DevChain c(store);
+    auto reason = [&](std::uint64_t t) {
+        try {
+            c.produce(producer_key(), {}, t);
+        } catch (const dev::BlockRejected& e) {
+            return e.reason();
+        }
+        return Reject::Conflict;
+    };
+    CHECK(reason(5) == Reject::BadTime);                     // before genesis time
+    CHECK(reason(UINT64_MAX) == Reject::BadTime);            // beyond the timestamp range
+    CHECK(reason(dev::kMaxDevTimeMs + 1) == Reject::BadTime);
+    CHECK_FALSE(c.engine().has_pending());
+    CHECK_NOTHROW(c.produce(producer_key(), {}));            // the chain is still usable
+    const auto t1 = c.block(1)->header.time_ms;
+    CHECK(reason(t1) == Reject::BadTime);                    // not strictly later than the previous block
+    CHECK_NOTHROW(c.produce(producer_key(), {}, dev::kMaxDevTimeMs));
+    CHECK(reason(UINT64_MAX) == Reject::BadTime);            // nothing fits after the maximum ...
+    try {
+        c.produce(producer_key(), {});                       // ... and the default time overflows cleanly
+        FAIL("accepted");
+    } catch (const dev::BlockRejected& e) {
+        CHECK(e.reason() == Reject::BadTime);
+    }
+}
