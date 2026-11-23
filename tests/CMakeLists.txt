@@ -18,7 +18,8 @@ if(YAP_BUILD_TESTS)
     unit/ledger_test.cpp
     unit/economics_test.cpp
     unit/merkle_test.cpp
-    unit/genesis_test.cpp)
+    unit/genesis_test.cpp
+    unit/engine_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
