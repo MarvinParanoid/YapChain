@@ -118,6 +118,27 @@ LmdbStore::LmdbStore(const Options& options) : impl_(std::make_unique<Impl>()) {
     const unsigned env_flags = (options.read_only ? MDB_RDONLY : 0U) | MDB_NOTLS;
     check(mdb_env_open(impl_->env, options.dir.c_str(), env_flags, 0600), "mdb_env_open");
 
+    // A data file shorter than the pages LMDB believes are in use (e.g. truncated by a disk-full
+    // copy) would make LMDB touch unmapped memory: SIGBUS instead of an error. Refuse it here.
+    {
+        MDB_envinfo info{};
+        MDB_stat st{};
+        check(mdb_env_info(impl_->env, &info), "mdb_env_info");
+        check(mdb_env_stat(impl_->env, &st), "mdb_env_stat");
+        std::error_code ec;
+        const auto file_size = std::filesystem::file_size(options.dir / "data.mdb", ec);
+        const auto needed = (static_cast<std::uintmax_t>(info.me_last_pgno) + 1) * st.ms_psize;
+        if (ec || file_size < needed) {
+            throw StorageError("data file " + (options.dir / "data.mdb").string() + " is truncated or unreadable (" +
+                               std::to_string(ec ? 0 : file_size) + " bytes, at least " + std::to_string(needed) +
+                               " needed)");
+        }
+    }
+    if (!options.read_only) {
+        int dead = 0;
+        check(mdb_reader_check(impl_->env, &dead), "mdb_reader_check");  // free slots of crashed readers
+    }
+
     // Open (and, when allowed, create) one named database per table.
     Txn txn(impl_->env, options.read_only ? MDB_RDONLY : 0U);
     const unsigned db_flags = (options.create && !options.read_only) ? MDB_CREATE : 0U;

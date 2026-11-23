@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <thread>
+#include <unistd.h>
 
 #include "temp_dir.hpp"
 #include "yap/storage/lmdb_store.hpp"
@@ -250,4 +251,25 @@ TEST_CASE("fault points are reported in order", "[storage]") {
         set_fault_hook({});
         CHECK(seen == std::vector<std::string>{"before_txn", "mid", "before_commit", "after_commit"});
     }
+}
+
+TEST_CASE("a truncated LMDB data file is refused instead of crashing", "[storage][lmdb][audit]") {
+    // Audit M1.5: `truncate -s 20000 data.mdb` made every command die with SIGBUS.
+    test::TempDir dir;
+    {
+        LmdbStore s({dir.path()});
+        WriteBatch b;
+        for (std::uint32_t i = 0; i < 3000; ++i) {
+            b.put(Table::State, {static_cast<Byte>(i >> 8), static_cast<Byte>(i), 1}, Bytes(100, 7));
+        }
+        s.write(b);
+    }
+    const auto file = dir.path() / "data.mdb";
+    REQUIRE(std::filesystem::file_size(file) > 20000);
+    REQUIRE(::truncate(file.c_str(), 20000) == 0);
+    CHECK_THROWS_AS(LmdbStore({dir.path()}), StorageError);
+    LmdbStore::Options ro{dir.path()};
+    ro.read_only = true;
+    ro.create = false;
+    CHECK_THROWS_AS(LmdbStore(ro), StorageError);
 }

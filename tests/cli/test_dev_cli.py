@@ -132,6 +132,13 @@ def main(yap, corrupt):
         a.run("dev", "produce", expect=3)
         Cli(yap, f("home-empty"), pw).run("query", "chain", expect=2)  # no chain
 
+        # A truncated data file is a storage error, not a crash (audit M1.5: SIGBUS before).
+        shutil.copytree(f("home-b"), f("home-trunc"))
+        os.truncate(os.path.join(f("home-trunc"), "data", "data.mdb"), 20000)
+        for cmd in (["query", "chain"], ["verify-state"], ["dev", "export", "--out", f("t.hex")]):
+            out = Cli(yap, f("home-trunc"), pw).run(*cmd, expect=3)
+            check("truncated" in out.stderr, f"{cmd}: {out.stderr}")
+
         # Exit codes (audit M1.5): nothing ends up as 5 "internal error".
         empty = Cli(yap, f("home-uninit"), pw)
         subprocess.run([corrupt, os.path.join(f("home-uninit"), "data"), "empty-db"], check=True)
