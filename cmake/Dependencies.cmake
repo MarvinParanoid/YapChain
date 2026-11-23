@@ -104,8 +104,16 @@ FetchContent_Declare(cli11
   DOWNLOAD_NO_EXTRACT TRUE
   DOWNLOAD_NAME CLI11.hpp)
 FetchContent_MakeAvailable(cli11)
+# The downloaded file keeps its source name for file:// URLs (offline builds), so copy the
+# single verified header to a stable include path.
+file(GLOB _yap_cli11_header "${cli11_SOURCE_DIR}/*.hpp")
+list(LENGTH _yap_cli11_header _yap_cli11_count)
+if(NOT _yap_cli11_count EQUAL 1)
+  message(FATAL_ERROR "expected exactly one CLI11 header in ${cli11_SOURCE_DIR}")
+endif()
+configure_file("${_yap_cli11_header}" "${CMAKE_BINARY_DIR}/_deps/cli11-include/CLI11.hpp" COPYONLY)
 add_library(yap_cli11 INTERFACE)
-target_include_directories(yap_cli11 SYSTEM INTERFACE "${cli11_SOURCE_DIR}")
+target_include_directories(yap_cli11 SYSTEM INTERFACE "${CMAKE_BINARY_DIR}/_deps/cli11-include")
 add_library(yap::cli11 ALIAS yap_cli11)
 
 # ------------------------------------------------------------------ test-only dependencies
