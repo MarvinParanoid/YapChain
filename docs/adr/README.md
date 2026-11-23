@@ -27,3 +27,4 @@
 | [0020](0020-validator-public-key-validation.md) | Строгая проверка публичных ключей валидаторов | DECIDED |
 | [0021](0021-zero-credit-and-genesis-json.md) | Нулевые зачисления и схема genesis JSON | DECIDED |
 | [0022](0022-storage-layout.md) | Хранилище ноды: LMDB 0.9.36, таблицы, гарантии | DECIDED |
+| [0023](0023-persistent-smt.md) | Персистентный SMT и проверка состояния | DECIDED |

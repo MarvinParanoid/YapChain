@@ -10,7 +10,7 @@ namespace yap::chain {
 
 using storage::Table;
 
-Engine::Engine(storage::KvStore& store) : store_(&store), state_view_(store, Table::State) {
+Engine::Engine(storage::KvStore& store) : store_(&store), state_view_(store, Table::State), nodes_(store) {
     if (auto raw = store_->get(Table::Meta, meta_key())) {
         auto meta = ycs::decode<StoreMeta>(*raw);
         if (!meta) throw storage::StorageError("store metadata is unreadable or has an unsupported schema version");
@@ -49,6 +49,20 @@ void Engine::append_state_changes(storage::WriteBatch& batch, const state::Overl
     }
 }
 
+void Engine::append_smt_changes(storage::WriteBatch& batch, const merkle::SmtUpdater& smt) {
+    for (const auto& [hash, node] : smt.changes()) {
+        if (node) {
+            batch.put(Table::Smt, Bytes(hash.begin(), hash.end()), merkle::encode_node(*node));
+        } else {
+            batch.erase(Table::Smt, Bytes(hash.begin(), hash.end()));
+        }
+    }
+}
+
+state::RootFn Engine::incremental_root(merkle::SmtUpdater& smt) const {
+    return [&smt](const state::Overlay& block_state) { return apply_state_changes(smt, block_state); };
+}
+
 Hash32 Engine::init_chain(const Genesis& genesis) {
     if (meta_) throw std::logic_error("Engine: already initialised");
     bool empty = true;
@@ -61,11 +75,14 @@ Hash32 Engine::init_chain(const Genesis& genesis) {
     state::Overlay o(&state_view_);
     write_initial_state(genesis, o);
     state::check_invariants(o);
-    const Hash32 root = state::state_root(o);
+    merkle::SmtUpdater smt(nodes_, Hash32{});
+    const Hash32 root = apply_state_changes(smt, o);
+    if (root != state::state_root(o)) throw FailStop("persistent SMT disagrees with the full recomputation");
 
     StoreMeta meta{kSchemaVersion, genesis.chain_id, genesis_hash(genesis), 0, root};
     storage::WriteBatch batch;
     append_state_changes(batch, o);
+    append_smt_changes(batch, smt);
     batch.mark("after_smt");
     batch.put(Table::Meta, meta_key(), ycs::encode(meta));
     store_->write(batch);  // durable before InitChain returns
@@ -111,7 +128,8 @@ std::vector<Bytes> Engine::prepare_proposal(const state::BlockContext& ctx, cons
 bool Engine::process_proposal(const state::BlockContext& ctx) const {
     require_initialized();
     state::Overlay scratch(&state_view_);  // discarded: ProcessProposal never changes the state
-    const auto result = state::execute_block(scratch, meta_->chain_id, ctx);
+    merkle::SmtUpdater smt(nodes_, meta_->last_state_root);
+    const auto result = state::execute_block(scratch, meta_->chain_id, ctx, incremental_root(smt));
     for (const auto& r : result.tx_results) {
         if (r.code != tx::TxCode::Ok) return false;
     }
@@ -122,8 +140,11 @@ state::BlockResult Engine::finalize_block(const state::BlockContext& ctx) {
     require_initialized();
     if (pending_) throw std::logic_error("Engine: finalize_block called twice without commit");
     auto overlay = std::make_unique<state::Overlay>(&state_view_);
-    auto result = state::execute_block(*overlay, meta_->chain_id, ctx);  // throws FailStop: nothing kept
+    auto smt = std::make_unique<merkle::SmtUpdater>(nodes_, meta_->last_state_root);
+    // Throws FailStop (or SmtCorruption): nothing is kept.
+    auto result = state::execute_block(*overlay, meta_->chain_id, ctx, incremental_root(*smt));
     pending_ = std::move(overlay);
+    pending_smt_ = std::move(smt);
     pending_result_ = result;
     pending_height_ = ctx.height;
     return result;
@@ -141,6 +162,7 @@ Hash32 Engine::commit() {
 
     storage::WriteBatch batch;
     append_state_changes(batch, *pending_);
+    append_smt_changes(batch, *pending_smt_);
     batch.mark("after_smt");
     batch.put(Table::Results, results_key(pending_height_), ycs::encode(record));
     batch.put(Table::Meta, meta_key(), ycs::encode(next));
@@ -150,6 +172,7 @@ Hash32 Engine::commit() {
     // Only now is the height committed.
     meta_ = next;
     pending_.reset();
+    pending_smt_.reset();
     pending_result_.reset();
     check_state_.reset();  // mempool transactions are re-checked against the new state
     return next.last_state_root;

@@ -75,6 +75,15 @@ std::vector<Hash32> run_scenario(const json& sc, storage::KvStore& store) {
         CHECK(state::state_root(e.committed()) == r.state_root);
         roots.push_back(r.state_root);
     }
+    // The stored SMT is exactly the tree of the committed state: no missing and no orphan nodes.
+    const chain::StoreNodeReader nodes(store);
+    const auto report = merkle::verify_tree(nodes, e.info().last_state_root);
+    std::size_t stored_nodes = 0;
+    store.for_each(storage::Table::Smt, [&](const Bytes&, const Bytes&) { ++stored_nodes; });
+    CHECK(stored_nodes == report.leaves.size() + report.internal_nodes);
+    std::size_t state_entries = 0;
+    e.committed().for_each([&](const Bytes&, const Bytes&) { ++state_entries; });
+    CHECK(report.leaves.size() == state_entries);
     return roots;
 }
 

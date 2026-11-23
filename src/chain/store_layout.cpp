@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "yap/chain/store_layout.hpp"
 
+#include "yap/common/hex.hpp"
+
 namespace yap::chain {
 
 Bytes meta_key() {
@@ -54,6 +56,21 @@ Bytes results_key(std::uint64_t height) {
         height >>= 8;
     }
     return k;
+}
+
+std::optional<merkle::SmtNode> StoreNodeReader::node(const Hash32& hash) const {
+    auto raw = store_->get(storage::Table::Smt, hash);
+    if (!raw) return std::nullopt;
+    auto n = merkle::decode_node(*raw);
+    if (!n) throw merkle::SmtCorruption("undecodable SMT node " + to_hex(hash));
+    return n;
+}
+
+Hash32 apply_state_changes(merkle::SmtUpdater& smt, const state::Overlay& block_state) {
+    for (const auto& [k, v] : block_state.changes()) {
+        smt.update(merkle::smt_key(k), v ? std::optional<Hash32>(merkle::smt_value_hash(*v)) : std::nullopt);
+    }
+    return smt.root();
 }
 
 }  // namespace yap::chain

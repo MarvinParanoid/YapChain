@@ -3,6 +3,7 @@
 // Block execution (docs/protocol.md §9.1, §9.2).
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -35,9 +36,14 @@ struct BlockResult {
     Hash32 state_root{};
 };
 
+/// Computes the state root after a block from the block overlay (step 6). The default
+/// recomputes the whole tree; the engine supplies an incremental persistent SMT instead.
+using RootFn = std::function<Hash32(const Overlay& block_state)>;
+
 /// Executes §9.2 steps 1-6 into `block_state` (an overlay over the state of height H-1).
 /// `chain_id` is the network's chain id from genesis. Context violations and arithmetic
 /// failures outside transactions throw FailStop; transaction errors only produce result codes.
-BlockResult execute_block(Overlay& block_state, std::string_view chain_id, const BlockContext& ctx);
+BlockResult execute_block(Overlay& block_state, std::string_view chain_id, const BlockContext& ctx,
+                          const RootFn& root_fn = {});
 
 }  // namespace yap::state

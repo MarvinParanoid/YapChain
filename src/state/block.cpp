@@ -6,7 +6,8 @@
 
 namespace yap::state {
 
-BlockResult execute_block(Overlay& block_state, std::string_view chain_id, const BlockContext& ctx) {
+BlockResult execute_block(Overlay& block_state, std::string_view chain_id, const BlockContext& ctx,
+                          const RootFn& root_fn) {
     State st(block_state);
 
     // 1. Context.
@@ -40,7 +41,7 @@ BlockResult execute_block(Overlay& block_state, std::string_view chain_id, const
     check_invariants(block_state);  // protocol.md §7.3: after every block in debug builds
 #endif
     // 6. Commitment.
-    result.state_root = state_root(block_state);
+    result.state_root = root_fn ? root_fn(block_state) : state_root(block_state);
     return result;
 }
 

@@ -74,9 +74,13 @@ public:
 private:
     void require_initialized() const;
     void append_state_changes(storage::WriteBatch& batch, const state::Overlay& changes) const;
+    static void append_smt_changes(storage::WriteBatch& batch, const merkle::SmtUpdater& smt);
+    [[nodiscard]] state::RootFn incremental_root(merkle::SmtUpdater& smt) const;
 
     storage::KvStore* store_;
     TableReader state_view_;
+    StoreNodeReader nodes_;
+    std::unique_ptr<merkle::SmtUpdater> pending_smt_;
     std::optional<StoreMeta> meta_;
     std::unique_ptr<state::Overlay> pending_;
     std::optional<state::BlockResult> pending_result_;

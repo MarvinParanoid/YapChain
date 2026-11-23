@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "yap/codec/ycs.hpp"
+#include "yap/merkle/persistent_smt.hpp"
 #include "yap/state/kv.hpp"
 #include "yap/storage/store.hpp"
 
@@ -56,5 +57,18 @@ private:
     const storage::KvStore* store_;
     storage::Table table_;
 };
+
+/// Nodes of the persistent SMT stored in Table::Smt.
+class StoreNodeReader final : public merkle::NodeReader {
+public:
+    explicit StoreNodeReader(const storage::KvStore& store) : store_(&store) {}
+    [[nodiscard]] std::optional<merkle::SmtNode> node(const Hash32& hash) const override;
+
+private:
+    const storage::KvStore* store_;
+};
+
+/// Feeds every change of `block_state` (relative to its base) into `smt` and returns the new root.
+Hash32 apply_state_changes(merkle::SmtUpdater& smt, const state::Overlay& block_state);
 
 }  // namespace yap::chain

@@ -1,4 +1,4 @@
-add_library(yap_merkle STATIC merkle.cpp)
+add_library(yap_merkle STATIC merkle.cpp persistent_smt.cpp)
 add_library(yap::merkle ALIAS yap_merkle)
 target_include_directories(yap_merkle PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(yap_merkle PUBLIC yap::crypto)

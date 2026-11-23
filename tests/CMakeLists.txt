@@ -20,7 +20,8 @@ if(YAP_BUILD_TESTS)
     unit/merkle_test.cpp
     unit/genesis_test.cpp
     unit/engine_test.cpp
-    unit/storage_test.cpp)
+    unit/storage_test.cpp
+    unit/persistent_smt_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
@@ -44,6 +45,11 @@ if(YAP_BUILD_TESTS)
   target_link_libraries(yap_fuzz_smoke PRIVATE yap_test_support)
   yap_target_warnings(yap_fuzz_smoke)
   add_test(NAME fuzz_smoke COMMAND yap_fuzz_smoke 200000)
+
+  # Benchmark (not a test): full SMT recomputation vs incremental persistent updates.
+  add_executable(yap_smt_bench bench/smt_bench.cpp)
+  target_link_libraries(yap_smt_bench PRIVATE yap_test_support)
+  yap_target_warnings(yap_smt_bench)
 endif()
 
 if(YAP_FUZZ)
