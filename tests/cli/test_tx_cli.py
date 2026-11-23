@@ -81,8 +81,10 @@ def main(yap):
         cli.run("tx", "inspect", f("nothex.hex"), expect=2)
 
         # Errors.
-        cli.run("tx", "transfer", "--from", "alice", "--to", bob["address"][:-1] + "x", "--amount", "1", *common,
-                "--out", f("x.hex"), expect=2)  # bad address
+        last = bob["address"][-1]
+        broken = bob["address"][:-1] + ("q" if last != "q" else "p")  # always differs from the original
+        cli.run("tx", "transfer", "--from", "alice", "--to", broken, "--amount", "1", *common,
+                "--out", f("x.hex"), expect=2)  # bad address (checksum)
         for amt in ["1.5", "-1", "1e6", "1.0000001YAP", "99999999999999999999999"]:
             cli.run("tx", "transfer", "--from", "alice", "--to", bob["address"], "--amount", amt, *common,
                     "--out", f("x.hex"), expect=2)
