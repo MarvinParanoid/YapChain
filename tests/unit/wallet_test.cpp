@@ -25,9 +25,17 @@ TEST_CASE("amount parsing is exact and strict", "[wallet][amount]") {
     CHECK(parse_amount("18446744073709551615") == kU64Max);
     CHECK(parse_amount("18446744073709.551615YAP") == kU64Max);
     for (const char* bad : {"", "-1", "+1", "1.5", "1e6", " 1", "1 ", "1.5 YAP", "0.0000001YAP", "1.YAP", ".5YAP",
-                            "YAP", "18446744073709551616", "18446744073709.551616YAP", "1,5YAP", "0x10"}) {
+                            "YAP", "18446744073709551616", "18446744073709.551616YAP", "1,5YAP", "0x10",
+                            "007", "01.5YAP", "00YAP", "0b11", "1_000"}) {
         INFO(bad);
         CHECK_FALSE(parse_amount(bad).has_value());
+    }
+    CHECK(parse_amount("0.5YAP") == 500'000U);
+    CHECK(parse_decimal_u64("0") == 0U);
+    CHECK(parse_decimal_u64("10") == 10U);
+    for (const char* bad : {"010", "0x10", "0b11", "0o17", "1_000", "", "-1", "+1", " 1", "1e3", "18446744073709551616"}) {
+        INFO(bad);
+        CHECK_FALSE(parse_decimal_u64(bad).has_value());
     }
     CHECK(format_amount(1'500'001) == "1.500001 YAP (1500001 yip)");
     CHECK(format_amount(0) == "0.000000 YAP (0 yip)");

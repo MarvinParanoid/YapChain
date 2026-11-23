@@ -28,7 +28,7 @@ namespace {
 
 struct NewArgs {
     std::string chain_id = "yapchain-dev-1";
-    std::uint64_t time_ms = 1'767'225'600'000;  // fixed default: reproducible genesis files
+    std::string time_ms = "1767225600000";  // fixed default: reproducible genesis files
     std::vector<std::string> accounts;
     std::vector<std::string> validators;
     std::string out;
@@ -37,7 +37,9 @@ struct NewArgs {
 chain::Genesis build_genesis(const NewArgs& a) {
     chain::Genesis g;
     g.chain_id = a.chain_id;
-    g.genesis_time_ms = a.time_ms;
+    const auto t = wallet::parse_decimal_u64(a.time_ms);
+    if (!t) throw CliError(kExitRejected, "invalid --time-ms '" + a.time_ms + "' (decimal digits only)");
+    g.genesis_time_ms = *t;
     g.params = tx::testnet_params();  // economics.md §8 (testnet only)
     for (const auto& spec : a.accounts) {
         const auto eq = spec.find('=');
@@ -62,7 +64,7 @@ chain::Genesis build_genesis(const NewArgs& a) {
         parts.push_back(spec.substr(start));
         auto pk = from_hex_fixed<32>(parts[0]);
         if (!pk) throw CliError(kExitRejected, "validator public key must be 64 lowercase hex characters");
-        const auto power = wallet::parse_amount(parts[1]);  // plain integer
+        const auto power = wallet::parse_decimal_u64(parts[1]);  // a plain integer, never a YAP amount
         auto reward = crypto::decode_address(parts[2], crypto::kTestnetHrp);
         if (!power || !reward) throw CliError(kExitRejected, "invalid --validator '" + spec + "'");
         g.validators.push_back({*pk, *power, *reward, parts[3]});

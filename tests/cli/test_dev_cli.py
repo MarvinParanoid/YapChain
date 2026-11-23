@@ -33,6 +33,9 @@ def main(yap, corrupt):
         open(f("bad-genesis.json"), "w").write(bad)
         a.run("genesis", "validate", f("bad-genesis.json"), expect=2)
         a.run("genesis", "new", "--validator", f"{'00' * 32}:10:{bob}:v", "--out", f("g2.json"), expect=2)  # small-order key
+        a.run("genesis", "new", "--time-ms", "0x1", "--validator", f"{VALIDATOR_PK}:10:{bob}:v", "--out", f("g3.json"),
+              expect=2)
+        a.run("genesis", "new", "--validator", f"{VALIDATOR_PK}:1YAP:{bob}:v", "--out", f("g4.json"), expect=2)
 
         # dev init: creates the producer key; re-init is a no-op; a different genesis is refused
         init = a.kv("dev", "init", "--genesis", f("genesis.json"))
@@ -65,6 +68,9 @@ def main(yap, corrupt):
         check(acct["nonce"] == "3" and acct["height"] == "5", f"account after 5 blocks: {acct}")
         chain_a = a.kv("query", "chain")
         roots_a = [a.kv("dev", "state-root", "--height", h)["state_root"] for h in range(6)]
+        a.run("dev", "state-root", "--height", "01", expect=2)
+        a.run("dev", "block", "--height", "0x1", expect=2)
+        a.run("dev", "produce", "--time-ms", "0x7fffffffffffffff", expect=2)
         check(roots_a[0] == gh["initial_state_root"], "height 0 root == genesis root")
         check(a.kv("verify-state")["status"] == "ok", "verify-state ok")
 

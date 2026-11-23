@@ -29,11 +29,16 @@ bool ends_with_yap(std::string_view s) {
 
 }  // namespace
 
+std::optional<std::uint64_t> parse_decimal_u64(std::string_view text) {
+    if (text.size() > 1 && text[0] == '0') return std::nullopt;  // "010" must not mean anything
+    return parse_digits(text);
+}
+
 std::optional<std::uint64_t> parse_amount(std::string_view text) {
-    if (!ends_with_yap(text)) return parse_digits(text);  // plain integer: yip
+    if (!ends_with_yap(text)) return parse_decimal_u64(text);  // plain integer: yip
     const auto number = text.substr(0, text.size() - 3);
     const auto dot = number.find('.');
-    const auto whole = parse_digits(number.substr(0, dot));
+    const auto whole = parse_decimal_u64(number.substr(0, dot));
     if (!whole) return std::nullopt;
     std::uint64_t frac = 0;
     if (dot != std::string_view::npos) {

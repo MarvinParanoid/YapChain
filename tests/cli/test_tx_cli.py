@@ -96,6 +96,15 @@ def main(yap):
         for amt in ["1.5", "-1", "1e6", "1.0000001YAP", "99999999999999999999999"]:
             cli.run("tx", "transfer", "--from", "alice", "--to", bob["address"], "--amount", amt, *common,
                     "--out", f("x.hex"), expect=2)
+        # Integer options are strict decimal (audit M1.5: CLI11 read 010 as 8 and accepted 0x10, 0b11, 1_000).
+        for opt, val in (("--nonce", "010"), ("--nonce", "0x10"), ("--nonce", "0b11"), ("--expires", "1_000"),
+                         ("--expires", "0100")):
+            args = ["tx", "transfer", "--from", "alice", "--to", bob["address"], "--amount", "1", "--chain-id", CHAIN,
+                    "--nonce", "0", "--expires", "50", "--out", f("x.hex")]
+            args[args.index(opt) + 1] = val
+            cli.run(*args, expect=2)
+        cli.run("tx", "transfer", "--from", "alice", "--to", bob["address"], "--amount", "007", *common,
+                "--out", f("x.hex"), expect=2)  # leading zeros in amounts
         cli.run("tx", "transfer", "--from", "alice", "--to", alice["address"], "--amount", "1", *common,
                 "--out", f("x.hex"), expect=2)  # self transfer
         cli.run("tx", "sign", "--key", "bob", "--in", f("body.hex"), "--out", f("x.hex"), expect=2)  # wrong signer

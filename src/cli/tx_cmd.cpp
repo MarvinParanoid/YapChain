@@ -25,8 +25,8 @@ struct BuildArgs {
     std::string to;
     std::string amount;
     std::string fee;
-    std::optional<std::uint64_t> nonce;
-    std::optional<std::uint64_t> expires;
+    std::string nonce;    // strict decimal; empty = from the local chain
+    std::string expires;  // strict decimal; empty = from the local chain
     std::string memo;
     std::string chain_id;
     std::string out;
@@ -48,7 +48,18 @@ crypto::AccountId address_or_fail(const std::string& text) {
     return *id;
 }
 
+std::optional<std::uint64_t> decimal_opt(const std::string& text, const char* what) {
+    if (text.empty()) return std::nullopt;
+    const auto v = wallet::parse_decimal_u64(text);
+    if (!v) throw CliError(kExitRejected, std::string("invalid ") + what + " '" + text + "' (decimal digits only)");
+    return v;
+}
+
 tx::TxBody build_body(const Context& ctx, const BuildArgs& a) {
+    struct Parsed {
+        std::optional<std::uint64_t> nonce, expires;
+    };
+    const Parsed n{decimal_opt(a.nonce, "--nonce"), decimal_opt(a.expires, "--expires")};
     tx::TxBody b;
     if (!a.from.empty() == !a.from_pubkey.empty()) throw CliError(kExitUsage, "give exactly one of --from / --from-pubkey");
     if (!a.from.empty()) {
@@ -60,19 +71,19 @@ tx::TxBody build_body(const Context& ctx, const BuildArgs& a) {
     }
 
     // Missing chain id / nonce / expiry / fee come from the local chain, if there is one.
-    const bool need_local = a.chain_id.empty() || !a.nonce || !a.expires;
+    const bool need_local = a.chain_id.empty() || !n.nonce || !n.expires;
     std::optional<LocalChain> local;
     if (need_local) local = open_local_chain(ctx, /*read_only=*/true, /*required=*/false);
     if (need_local && !local) {
         throw CliError(kExitRejected, "no local chain: pass --chain-id, --nonce and --expires explicitly");
     }
     b.chain_id = a.chain_id.empty() ? local->engine->info().chain_id : a.chain_id;
-    if (a.nonce) {
-        b.nonce = *a.nonce;
+    if (n.nonce) {
+        b.nonce = *n.nonce;
     } else {
         b.nonce = local->account(b.sender()).value_or(state::AccountState{}).nonce;
     }
-    b.expires_at_height = a.expires ? *a.expires : local->engine->info().last_height + kDefaultExpiryWindow;
+    b.expires_at_height = n.expires ? *n.expires : local->engine->info().last_height + kDefaultExpiryWindow;
     if (!a.fee.empty()) {
         b.fee = amount_or_fail(a.fee, "fee");
     } else {

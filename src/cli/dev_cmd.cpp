@@ -9,6 +9,7 @@
 #include "yap/chain/recovery.hpp"
 #include "yap/common/hex.hpp"
 #include "yap/dev/dev_chain.hpp"
+#include "yap/wallet/amount.hpp"
 
 namespace yap::cli {
 namespace {
@@ -48,6 +49,12 @@ std::vector<dev::DevBlock> decode_journal(ByteView data) {
     for (std::uint32_t i = 0; i < n && r.ok(); ++i) blocks.push_back(dev::DevBlock::decode_from(r));
     if (!r.finish()) throw CliError(kExitRejected, "malformed journal");
     return blocks;
+}
+
+std::uint64_t decimal_or_fail(const std::string& text, const char* what) {
+    const auto v = wallet::parse_decimal_u64(text);
+    if (!v) throw CliError(kExitRejected, std::string("invalid ") + what + " '" + text + "' (decimal digits only)");
+    return *v;
 }
 
 std::string reject_message(const dev::BlockRejected& e) { return std::string("block rejected: ") + e.what(); }
@@ -104,7 +111,7 @@ void register_dev(CLI::App& app, Context& ctx) {
     // produce
     struct ProduceArgs {
         std::vector<std::string> txs;
-        std::optional<std::uint64_t> time_ms;
+        std::string time_ms;
         bool require_all = false;
     };
     auto pa = std::make_shared<ProduceArgs>();
@@ -113,6 +120,8 @@ void register_dev(CLI::App& app, Context& ctx) {
     p->add_option("--time-ms", pa->time_ms, "Block time (default: previous + 2000 ms)");
     p->add_flag("--require-all", pa->require_all, "Fail instead of leaving out invalid transactions");
     p->callback([&ctx, pa] {
+        std::optional<std::uint64_t> time_ms;
+        if (!pa->time_ms.empty()) time_ms = decimal_or_fail(pa->time_ms, "--time-ms");
         std::vector<Bytes> candidates;
         for (const auto& f : pa->txs) candidates.push_back(read_hex_file(f));
         auto store = open_store(ctx, false, false);
@@ -134,7 +143,7 @@ void register_dev(CLI::App& app, Context& ctx) {
         std::vector<tx::TxCode> codes;
         dev::DevBlock b;
         try {
-            b = chain.produce(key, candidates, pa->time_ms, &codes);
+            b = chain.produce(key, candidates, time_ms, &codes);
         } catch (const dev::BlockRejected& e) {
             throw CliError(kExitRejected, reject_message(e));
         }
@@ -169,15 +178,16 @@ void register_dev(CLI::App& app, Context& ctx) {
     });
 
     // block
-    auto bh = std::make_shared<std::pair<std::uint64_t, std::string>>();
+    auto bh = std::make_shared<std::pair<std::string, std::string>>();
     auto* bl = dv->add_subcommand("block", "Show a stored block and optionally write it to a file");
     bl->add_option("--height", bh->first, "Height")->required();
     bl->add_option("--out", bh->second, "Write the block (hex) to this file");
     bl->callback([&ctx, bh] {
         auto store = open_store(ctx, true, false);
         auto chain_ptr = open_dev_chain(*store);
-        const auto b = chain_ptr->block(bh->first);
-        if (!b) throw CliError(kExitRejected, "no block at height " + std::to_string(bh->first));
+        const auto height = decimal_or_fail(bh->first, "--height");
+        const auto b = chain_ptr->block(height);
+        if (!b) throw CliError(kExitRejected, "no block at height " + std::to_string(height));
         print_block(*b);
         if (!bh->second.empty()) write_file_bytes(bh->second, as_bytes(to_hex(ycs::encode(*b)) + "\n"), ctx.force);
     });
@@ -222,14 +232,14 @@ void register_dev(CLI::App& app, Context& ctx) {
     });
 
     // state-root
-    auto sr = std::make_shared<std::optional<std::uint64_t>>();
+    auto sr = std::make_shared<std::string>();
     auto* s = dv->add_subcommand("state-root", "State root of the last (or a given) committed height");
     s->add_option("--height", *sr, "Height (0 = genesis)");
     s->callback([&ctx, sr] {
         auto store = open_store(ctx, true, false);
         chain::Engine e(*store);
         if (!e.initialized()) throw CliError(kExitRejected, "local chain is not initialised");
-        const std::uint64_t h = sr->value_or(e.info().last_height);
+        const std::uint64_t h = sr->empty() ? e.info().last_height : decimal_or_fail(*sr, "--height");
         const auto rec = e.block_record(h);
         if (!rec) throw CliError(kExitRejected, "no committed height " + std::to_string(h));
         out("height", h);
