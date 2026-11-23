@@ -510,6 +510,95 @@ def gen_tx():
     return {"chain_id": CHAIN_ID, "encode": encode, "decode_invalid": decode_invalid}
 
 
+# --------------------------------------------------------------------------- validation
+def gen_validation():
+    params = tx_ref.TESTNET_PARAMS
+    H = 10
+    s_a, s_b, s_new, s_max, s_issuer = seed(0), seed(1), seed(2), seed(3), seed(50)
+    a_id, b_id = account_id(ed.public_key(s_a)), account_id(ed.public_key(s_b))
+    max_id = account_id(ed.public_key(s_max))
+    accounts = {a_id: {"balance": 10_000_000, "nonce": 3}, b_id: {"balance": 2_000, "nonce": 0},
+                max_id: {"balance": 10**12, "nonce": tx_ref.U64_MAX}}
+
+    def body(sd=s_a, payload=None, **kw):
+        fields = dict(nonce=3 if sd == s_a else 0, fee=1000, expires=20)
+        fields.update(kw)
+        return make_body(sd, payload or {"type": "transfer", "to": b_id, "amount": 1000}, **fields)
+
+    def signed(b, sd=None):
+        sd = sd or next(x for x in (s_a, s_b, s_new, s_max) if ed.public_key(x) == b["sender_pubkey"])
+        return tx_ref.sign_tx(b, sd)
+
+    def bad_sig(b):
+        return tx_ref.encode_body(b) + tx_ref.sign_tx(dict(b, sender_pubkey=ed.public_key(s_b)), s_b)[-64:]
+
+    def claim(**over):
+        att = {"version": 1, "chain_id": CHAIN_ID, "issuer_id": 1, "key_id": 0, "achievement_id": 1,
+               "subject": a_id, "claim_id": b"\x01" * 16, "evidence_hash": b"\x00" * 32,
+               "issued_at_s": 1000, "expires_at_s": 2000}
+        att.update(over)
+        return {"type": "claim", "attestation": att, "issuer_signature": tx_ref.sign_attestation(att, s_issuer)}
+
+    garbage_big = b"\x00" * 4097
+    cases = [
+        ("ok_transfer", signed(body()), "OK"),
+        ("ok_burn", signed(body(payload={"type": "burn", "amount": 5})), "OK"),
+        ("ok_memo_at_limit", signed(body(memo=b"m" * 128)), "OK"),
+        ("ok_expires_equals_height", signed(body(expires=H)), "OK"),
+        ("ok_ttl_at_limit", signed(body(expires=H + 1800)), "OK"),
+        ("ok_exact_balance", signed(body(s_b, {"type": "transfer", "to": a_id, "amount": 1000})), "OK"),
+        ("S1_too_large", garbage_big, "ERR_TOO_LARGE"),
+        ("S2_garbage", b"\x01\x02\x03", "ERR_DECODE"),
+        ("S2_unknown_payload_tag", tx_ref.encode_body(body(payload={"type": "burn", "amount": 1}))[:-9]
+         + b"\x07" + b"\x00" * 72, "ERR_DECODE"),
+        ("S3_version_2", signed(body(version=2)), "ERR_VERSION"),
+        ("S3_before_S4", signed(body(version=2, chain_id="other-chain")), "ERR_VERSION"),
+        ("S4_wrong_chain", signed(body(chain_id="yapchain-testnet-2")), "ERR_CHAIN_ID"),
+        ("S5_memo_129", signed(body(memo=b"m" * 129)), "ERR_MEMO"),
+        ("S6_fee_999", signed(body(fee=999)), "ERR_FEE"),
+        ("S6_before_S11", bad_sig(body(fee=999)), "ERR_FEE"),
+        ("S7_expires_zero", signed(body(expires=0)), "ERR_EXPIRED"),
+        ("S8_amount_zero", signed(body(payload={"type": "transfer", "to": b_id, "amount": 0})), "ERR_PAYLOAD"),
+        ("S8_self_transfer", signed(body(payload={"type": "transfer", "to": a_id, "amount": 1})), "ERR_PAYLOAD"),
+        ("S9_burn_zero", signed(body(payload={"type": "burn", "amount": 0})), "ERR_PAYLOAD"),
+        ("S10_subject_mismatch", signed(body(payload=claim(subject=b_id))), "ERR_ATTESTATION"),
+        ("S10_chain_mismatch", signed(body(payload=claim(chain_id="other-chain"))), "ERR_ATTESTATION"),
+        ("S10_version_2", signed(body(payload=claim(version=2))), "ERR_ATTESTATION"),
+        ("S10_issued_not_before_expiry", signed(body(payload=claim(issued_at_s=2000))), "ERR_ATTESTATION"),
+        ("S10_validity_too_long", signed(body(payload=claim(expires_at_s=1000 + 604801))), "ERR_ATTESTATION"),
+        ("S10_before_S11", bad_sig(body(payload=claim(version=2))), "ERR_ATTESTATION"),
+        ("S11_wrong_signature", bad_sig(body()), "ERR_SIGNATURE"),
+        ("S11_before_T3", bad_sig(body(nonce=99)), "ERR_SIGNATURE"),
+        ("T1_expired", signed(body(expires=H - 1)), "ERR_EXPIRED"),
+        ("T1_before_T3", signed(body(expires=H - 1, nonce=99)), "ERR_EXPIRED"),
+        ("T2_ttl_too_long", signed(body(expires=H + 1801)), "ERR_TTL_TOO_LONG"),
+        ("T2_expires_u64_max", signed(body(expires=tx_ref.U64_MAX)), "ERR_TTL_TOO_LONG"),
+        ("T3_nonce_low", signed(body(nonce=2)), "ERR_NONCE"),
+        ("T3_nonce_high", signed(body(nonce=4)), "ERR_NONCE"),
+        ("T3_new_account_nonce_1", signed(body(s_new, nonce=1)), "ERR_NONCE"),
+        ("T3_before_T6", signed(body(nonce=4, payload={"type": "transfer", "to": b_id, "amount": 10**15})),
+         "ERR_NONCE"),
+        ("T4_nonce_u64_max", signed(body(s_max, nonce=tx_ref.U64_MAX)), "ERR_OVERFLOW"),
+        ("T5_amount_plus_fee_overflow",
+         signed(body(payload={"type": "transfer", "to": b_id, "amount": tx_ref.U64_MAX})), "ERR_OVERFLOW"),
+        ("T6_new_account_no_funds", signed(body(s_new, nonce=0)), "ERR_INSUFFICIENT_FUNDS"),
+        ("T6_one_yip_short", signed(body(s_b, {"type": "transfer", "to": a_id, "amount": 1001})),
+         "ERR_INSUFFICIENT_FUNDS"),
+        ("T6_burn_too_much", signed(body(payload={"type": "burn", "amount": 9_999_001})), "ERR_INSUFFICIENT_FUNDS"),
+        ("T7_claim_unsupported_until_m3", signed(body(payload=claim())), "ERR_UNSUPPORTED"),
+    ]
+    out = []
+    for name, data, expected in cases:
+        got = tx_ref.validate(data, H, CHAIN_ID, accounts, params)
+        assert got == expected, (name, got, expected)
+        out.append({"name": name, "tx_hex": hx(data), "code": expected})
+    return {"chain_id": CHAIN_ID, "height": str(H),
+            "params": {k: str(v) for k, v in params.items()},
+            "accounts": [{"account_id": hx(k), "balance": str(v["balance"]), "nonce": str(v["nonce"])}
+                         for k, v in sorted(accounts.items())],
+            "cases": out}
+
+
 # --------------------------------------------------------------------------- main
 def write(out_dir, name, obj):
     path = os.path.join(out_dir, name)
@@ -532,6 +621,7 @@ def main():
     write(args.out, "bech32m.json", gen_bech32m())
     write(args.out, "address.json", gen_addresses())
     write(args.out, "tx.json", gen_tx())
+    write(args.out, "validation.json", gen_validation())
     return 0
 
 

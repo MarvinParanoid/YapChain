@@ -110,3 +110,90 @@ def decode_tx(data):
     sig = r.take(64)
     r.finish()
     return body, sig
+
+
+# --------------------------------------------------------------------------- validation (§6.2, §6.3)
+U64_MAX = 2**64 - 1
+
+TESTNET_PARAMS = {
+    "min_fee": 1000, "fee_burn_bps": 5000, "block_reward": 2_000_000, "reward_validators_bps": 6000,
+    "reward_pool_bps": 3000, "reward_treasury_bps": 1000, "max_issuance": 10**15, "max_tx_bytes": 4096,
+    "max_memo_bytes": 128, "max_tx_ttl_blocks": 1800, "epoch_length_blocks": 43200,
+    "max_attestation_validity_s": 604800, "attestation_clock_skew_s": 300, "max_claims_per_subject_per_epoch": 20,
+}
+PARAM_FIELDS = [("min_fee", 8), ("fee_burn_bps", 2), ("block_reward", 8), ("reward_validators_bps", 2),
+                ("reward_pool_bps", 2), ("reward_treasury_bps", 2), ("max_issuance", 8), ("max_tx_bytes", 4),
+                ("max_memo_bytes", 4), ("max_tx_ttl_blocks", 8), ("epoch_length_blocks", 8),
+                ("max_attestation_validity_s", 8), ("attestation_clock_skew_s", 8),
+                ("max_claims_per_subject_per_epoch", 2)]
+
+
+def encode_params(p):
+    return b"".join(u(w, p[name]) for name, w in PARAM_FIELDS)
+
+
+def stateless(tx_bytes, chain_id, params):
+    """Returns (code, decoded-or-None)."""
+    if len(tx_bytes) > params["max_tx_bytes"]:
+        return "ERR_TOO_LARGE", None                                          # S1
+    try:
+        body, sig = decode_tx(tx_bytes)                                       # S2
+    except DecodeError:
+        return "ERR_DECODE", None
+    dec = (body, sig)
+    p = body["payload"]
+    sender = account_id(body["sender_pubkey"])
+    if body["version"] != 1:
+        return "ERR_VERSION", dec                                             # S3
+    if body["chain_id"] != chain_id:
+        return "ERR_CHAIN_ID", dec                                            # S4
+    if len(body["memo"]) > params["max_memo_bytes"]:
+        return "ERR_MEMO", dec                                                # S5
+    if body["fee"] < params["min_fee"]:
+        return "ERR_FEE", dec                                                 # S6
+    if body["expires_at_height"] < 1:
+        return "ERR_EXPIRED", dec                                             # S7
+    if p["type"] == "transfer" and (p["amount"] < 1 or p["to"] == sender):
+        return "ERR_PAYLOAD", dec                                             # S8
+    if p["type"] == "burn" and p["amount"] < 1:
+        return "ERR_PAYLOAD", dec                                             # S9
+    if p["type"] == "claim":                                                  # S10
+        a = p["attestation"]
+        ok = (a["version"] == 1 and a["chain_id"] == body["chain_id"] and a["subject"] == sender
+              and a["issued_at_s"] < a["expires_at_s"]
+              and a["expires_at_s"] - a["issued_at_s"] <= params["max_attestation_validity_s"])
+        if not ok:
+            return "ERR_ATTESTATION", dec
+    if not ed.verify(body["sender_pubkey"], TX_PREFIX + encode_body(body), sig):
+        return "ERR_SIGNATURE", dec                                           # S11
+    return "OK", dec
+
+
+def stateful(body, height, accounts, params):
+    """accounts: dict account_id -> {"balance", "nonce"}. M1.2 stage: claims are ERR_UNSUPPORTED (§15)."""
+    exp = body["expires_at_height"]
+    if height > exp:
+        return "ERR_EXPIRED"                                                  # T1
+    if exp - height > params["max_tx_ttl_blocks"]:
+        return "ERR_TTL_TOO_LONG"                                             # T2
+    acct = accounts.get(account_id(body["sender_pubkey"]), {"balance": 0, "nonce": 0})
+    if body["nonce"] != acct["nonce"]:
+        return "ERR_NONCE"                                                    # T3
+    if body["nonce"] == U64_MAX:
+        return "ERR_OVERFLOW"                                                 # T4
+    p = body["payload"]
+    if p["type"] == "claim":
+        return "ERR_UNSUPPORTED"                                              # T7 until M3
+    total = p["amount"] + body["fee"]
+    if total > U64_MAX:
+        return "ERR_OVERFLOW"                                                 # T5
+    if acct["balance"] < total:
+        return "ERR_INSUFFICIENT_FUNDS"                                       # T6
+    return "OK"
+
+
+def validate(tx_bytes, height, chain_id, accounts, params):
+    code, dec = stateless(tx_bytes, chain_id, params)
+    if code != "OK":
+        return code
+    return stateful(dec[0], height, accounts, params)

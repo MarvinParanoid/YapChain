@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 add_library(yap_test_support INTERFACE)
 target_include_directories(yap_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/support)
-target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx)
+target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx yap::state)
 
 if(YAP_BUILD_TESTS)
   include(Catch)
@@ -13,14 +13,16 @@ if(YAP_BUILD_TESTS)
     unit/ed25519_test.cpp
     unit/bech32m_test.cpp
     unit/address_test.cpp
-    unit/tx_test.cpp)
+    unit/tx_test.cpp
+    unit/validation_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
 
   add_executable(yap_vector_tests
     vectors/vectors_test.cpp
-    vectors/tx_vectors_test.cpp)
+    vectors/tx_vectors_test.cpp
+    vectors/validation_vectors_test.cpp)
   target_link_libraries(yap_vector_tests PRIVATE yap_test_support nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
   target_compile_definitions(yap_vector_tests PRIVATE YAP_TEST_VECTORS_DIR="${PROJECT_SOURCE_DIR}/test-vectors")
   yap_target_warnings(yap_vector_tests)

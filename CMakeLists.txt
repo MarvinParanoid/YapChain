@@ -47,6 +47,7 @@ add_subdirectory(src/common)
 add_subdirectory(src/codec)
 add_subdirectory(src/crypto)
 add_subdirectory(src/tx)
+add_subdirectory(src/state)
 
 if(YAP_BUILD_TESTS OR YAP_FUZZ)
   enable_testing()
