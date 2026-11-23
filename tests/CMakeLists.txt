@@ -14,7 +14,8 @@ if(YAP_BUILD_TESTS)
     unit/bech32m_test.cpp
     unit/address_test.cpp
     unit/tx_test.cpp
-    unit/validation_test.cpp)
+    unit/validation_test.cpp
+    unit/ledger_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
