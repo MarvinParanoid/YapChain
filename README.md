@@ -26,9 +26,29 @@ YapChain — open-source блокчейн мемной экосистемы с �
   Sparse Merkle state root, execution engine с жизненным циклом ABCI++; всё сверено с независимой Python-реализацией.
 - **M1.3 Persistence** — реализован: LMDB-хранилище, атомарный commit высоты, персистентный инкрементальный SMT,
   проверка и восстановление состояния, replay, crash-тесты с SIGKILL.
-- M1.4 (dev-chain и CLI) — впереди, см. [docs/roadmap.md](docs/roadmap.md).
+- **M1.4 Dev-chain и CLI** — реализован: зашифрованный keystore, транзакции, подписанные dev-блоки,
+  локальная dev-цепочка, запросы и проверка состояния через `yap`.
+- M2 (CometBFT, сеть) — впереди, см. [docs/roadmap.md](docs/roadmap.md).
 
-Сети и консенсуса пока нет.
+Сети и консенсуса пока нет: dev-цепочка — локальный инструмент разработки с одним производителем блоков.
+
+## Быстрый старт (локальная dev-цепочка)
+
+```sh
+yap keys create alice                      # пароль спрашивается без эха (или --password-file)
+yap keys create bob
+yap genesis new --account <alice>=100YAP \
+    --validator <pubkey-hex>:10:<bob>:validator-1 --out genesis.json
+yap dev init --genesis genesis.json        # создаёт ключ dev-производителя
+yap tx transfer --from alice --to <bob> --amount 1.5YAP --out t1.hex   # nonce/срок из локального state
+yap dev produce --tx t1.hex --require-all
+yap query account <alice>
+yap query chain
+yap verify-state
+yap dev export --out journal.hex           # журнал для replay на другой ноде
+```
+
+Коды выхода: 0 — успех, 1 — командная строка, 2 — отклонено/невалидно, 3 — хранилище, 4 — пароль/keystore.
 
 ## Сборка и тесты
 

@@ -57,6 +57,7 @@ if(YAP_BUILD_TESTS)
   target_link_libraries(yap_test_corrupt PRIVATE yap_test_support)
   yap_target_warnings(yap_test_corrupt)
   add_test(NAME cli:dev COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_dev_cli.py $<TARGET_FILE:yap> $<TARGET_FILE:yap_test_corrupt>)
+  add_test(NAME e2e:workflow COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/e2e/test_e2e_workflow.py $<TARGET_FILE:yap>)
   add_test(NAME cli:tx COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_tx_cli.py $<TARGET_FILE:yap>)
 
   # Crash-recovery tests fork child processes that are killed with SIGKILL.
