@@ -47,6 +47,12 @@ if(YAP_BUILD_TESTS)
   yap_target_warnings(yap_fuzz_smoke)
   add_test(NAME fuzz_smoke COMMAND yap_fuzz_smoke 200000)
 
+  # Crash-recovery tests fork child processes that are killed with SIGKILL.
+  add_executable(yap_crash_tests crash/crash_recovery_test.cpp)
+  target_link_libraries(yap_crash_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
+  yap_target_warnings(yap_crash_tests)
+  catch_discover_tests(yap_crash_tests TEST_PREFIX "crash:" PROPERTIES TIMEOUT 1800)
+
   # Benchmark (not a test): full SMT recomputation vs incremental persistent updates.
   add_executable(yap_smt_bench bench/smt_bench.cpp)
   target_link_libraries(yap_smt_bench PRIVATE yap_test_support)

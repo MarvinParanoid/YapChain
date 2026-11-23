@@ -99,8 +99,10 @@ State machine: аккаунты, глобальное состояние `ChainS
 и записываются одной атомарной транзакцией только в `commit()`.
 
 ### 3.7 storage
-Интерфейс `KvStore` (get/put/delete/атомарный batch, упорядоченная итерация) и две реализации:
-`MemoryKvStore` (тесты) и `LmdbKvStore` (PROPOSED, [ADR-0007](adr/0007-storage-lmdb.md)).
+Интерфейс `KvStore` (таблицы `state`, `smt`, `results`, `meta`; точечное чтение, упорядоченный обход,
+атомарный `WriteBatch`) и две реализации: `MemoryStore` и `LmdbStore` (DECIDED, LMDB 0.9.36,
+[ADR-0007](adr/0007-storage-lmdb.md), [ADR-0022](adr/0022-storage-layout.md)). Узлы SMT хранятся отдельно от
+консенсусного state и обновляются инкрементально ([ADR-0023](adr/0023-persistent-smt.md)).
 Хранит: листья state, узлы SMT (content-addressed), метаданные (`last_height`, `last_state_root`),
 результаты транзакций по высоте (для запросов). Блоки хранит **консенсус-движок** (CometBFT blockstore);
 в dev-режиме — отдельный журнал dev-блоков.

@@ -24,9 +24,11 @@ YapChain — open-source блокчейн мемной экосистемы с �
 - **M1.2 Ledger** — реализован: транзакции `Transfer`/`Burn` (формат `ClaimAchievement` декодируется, исполнение — M3),
   валидация в нормативном порядке, детерминированная state machine в памяти, комиссии и эмиссия, genesis,
   Sparse Merkle state root, execution engine с жизненным циклом ABCI++; всё сверено с независимой Python-реализацией.
-- M1.3–M1.4 (хранилище на диске, dev-chain и CLI) — впереди, см. [docs/roadmap.md](docs/roadmap.md).
+- **M1.3 Persistence** — реализован: LMDB-хранилище, атомарный commit высоты, персистентный инкрементальный SMT,
+  проверка и восстановление состояния, replay, crash-тесты с SIGKILL.
+- M1.4 (dev-chain и CLI) — впереди, см. [docs/roadmap.md](docs/roadmap.md).
 
-Сети, консенсуса и хранения на диске пока нет.
+Сети и консенсуса пока нет.
 
 ## Сборка и тесты
 
