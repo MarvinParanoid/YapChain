@@ -198,3 +198,19 @@ TEST_CASE("dev block decoding enforces the protocol limits", "[dev]") {
     b.txs = {Bytes(dev::kMaxDevBlockTxBytes + 1, 0)};
     CHECK(ycs::decode<dev::DevBlock>(ycs::encode(b)).error() == ycs::DecodeError::LengthLimit);
 }
+
+TEST_CASE("a failed dev-block commit leaves the chain usable", "[dev][audit]") {
+    const auto net = TestNet::make(5);
+    storage::MemoryStore store;
+    dev::DevChain::init(store, net.genesis, producer_key().public_key());
+    dev::DevChain c(store);
+    storage::set_fault_hook([](std::string_view p) {
+        if (p == "before_commit") throw storage::StorageFull("injected MAP_FULL");
+    });
+    CHECK_THROWS_AS(c.produce(producer_key(), {}), storage::StorageFull);
+    storage::set_fault_hook({});
+    CHECK_FALSE(c.engine().has_pending());  // previously every later produce/import failed
+    CHECK(c.engine().info().last_height == 0);
+    CHECK_NOTHROW(c.produce(producer_key(), {}));
+    CHECK(c.engine().info().last_height == 1);
+}

@@ -138,20 +138,25 @@ state::BlockResult DevChain::import(const DevBlock& b) {
     if (merkle::rfc6962_root(b.txs) != h.tx_root) throw reject(Reject::BadTxRoot, to_hex(h.tx_root));
 
     const auto result = engine_.finalize_block(context_for(b));
-    for (std::size_t i = 0; i < result.tx_results.size(); ++i) {
-        if (result.tx_results[i].code != tx::TxCode::Ok) {
-            engine_.abort_pending();
-            throw reject(Reject::InvalidTransaction,
-                         "tx " + std::to_string(i) + ": " + std::string(tx::to_string(result.tx_results[i].code)));
+    try {
+        for (std::size_t i = 0; i < result.tx_results.size(); ++i) {
+            if (result.tx_results[i].code != tx::TxCode::Ok) {
+                throw reject(Reject::InvalidTransaction,
+                             "tx " + std::to_string(i) + ": " + std::string(tx::to_string(result.tx_results[i].code)));
+            }
         }
-    }
-    if (result.state_root != h.state_root) {
+        if (result.state_root != h.state_root) {
+            throw reject(Reject::BadStateRoot,
+                         "computed " + to_hex(result.state_root) + ", header " + to_hex(h.state_root));
+        }
+        storage::WriteBatch extra;
+        extra.put(Table::Blocks, block_key(h.height), ycs::encode(b));
+        engine_.commit(extra);  // block and state in one transaction
+    } catch (...) {
+        // Rejections and failed writes (e.g. StorageFull) leave the chain usable for the next attempt.
         engine_.abort_pending();
-        throw reject(Reject::BadStateRoot, "computed " + to_hex(result.state_root) + ", header " + to_hex(h.state_root));
+        throw;
     }
-    storage::WriteBatch extra;
-    extra.put(Table::Blocks, block_key(h.height), ycs::encode(b));
-    engine_.commit(extra);  // block and state in one transaction
     return result;
 }
 

@@ -85,12 +85,17 @@ std::size_t replay(Engine& engine, std::span<const ReplayBlock> blocks,
                            std::to_string(b.ctx.height));
         }
         const auto result = engine.finalize_block(b.ctx);
-        if (b.expected_root && *b.expected_root != result.state_root) {
-            // Do not commit a diverging height.
-            throw FailStop("replay: state root mismatch at height " + std::to_string(b.ctx.height) + ": got " +
-                           to_hex(result.state_root) + ", journal says " + to_hex(*b.expected_root));
+        try {
+            if (b.expected_root && *b.expected_root != result.state_root) {
+                // Do not commit a diverging height.
+                throw FailStop("replay: state root mismatch at height " + std::to_string(b.ctx.height) + ": got " +
+                               to_hex(result.state_root) + ", journal says " + to_hex(*b.expected_root));
+            }
+            engine.commit();
+        } catch (...) {
+            engine.abort_pending();  // never leave a block behind that a later commit could persist
+            throw;
         }
-        engine.commit();
         if (on_block) on_block(b, result);
         ++executed;
     }

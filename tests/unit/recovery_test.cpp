@@ -247,3 +247,18 @@ TEST_CASE("verification during concurrent commits never reports false corruption
     CHECK(checks.load() > 10);
     CHECK_NOTHROW((void)chain::verify_state(store));
 }
+
+TEST_CASE("a failed replay leaves no pending block behind", "[recovery][audit]") {
+    Fixture f;
+    f.build(2);
+    storage::LmdbStore store({f.dir.path()});
+    chain::Engine e(store);
+    auto bad = f.blocks;
+    bad[4].expected_root->at(0) ^= 1;
+    CHECK_THROWS_AS(chain::replay(e, bad), FailStop);
+    CHECK_FALSE(e.has_pending());  // previously the diverging block stayed pending (and could be committed)
+    CHECK_THROWS_AS(e.commit(), std::logic_error);
+    CHECK(e.info().last_height == 4);
+    CHECK(chain::replay(e, f.blocks) == f.blocks.size() - 4);  // the same engine continues cleanly
+    CHECK(e.info().last_state_root == f.roots.back());
+}
