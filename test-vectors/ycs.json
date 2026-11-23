@@ -1,0 +1,256 @@
+{
+ "generator": "tools/refgen/refgen.py",
+ "vectors": {
+  "invalid": [
+   {
+    "error": "truncated",
+    "hex": "",
+    "schema": "u8"
+   },
+   {
+    "error": "truncated",
+    "hex": "01",
+    "schema": "u16"
+   },
+   {
+    "error": "trailing_bytes",
+    "hex": "000000000000000000",
+    "schema": "u64"
+   },
+   {
+    "error": "invalid_bool",
+    "hex": "02",
+    "schema": "bool"
+   },
+   {
+    "error": "invalid_bool",
+    "hex": "ff",
+    "schema": "bool"
+   },
+   {
+    "error": "invalid_option_tag",
+    "hex": "0200000000",
+    "schema": "option_u32"
+   },
+   {
+    "error": "truncated",
+    "hex": "010000",
+    "schema": "option_u32"
+   },
+   {
+    "error": "length_limit",
+    "hex": "09000000000000000000000000",
+    "schema": "bytes8"
+   },
+   {
+    "error": "truncated",
+    "hex": "05000000000000",
+    "schema": "bytes8"
+   },
+   {
+    "error": "length_limit",
+    "hex": "ffffffff",
+    "schema": "bytes8"
+   },
+   {
+    "error": "truncated",
+    "hex": "000000",
+    "schema": "bytes8"
+   },
+   {
+    "error": "invalid_content",
+    "hex": "0300000061627f",
+    "schema": "ascii8"
+   },
+   {
+    "error": "invalid_content",
+    "hex": "010000001f",
+    "schema": "ascii8"
+   },
+   {
+    "error": "invalid_content",
+    "hex": "02000000c3a9",
+    "schema": "ascii8"
+   },
+   {
+    "error": "length_limit",
+    "hex": "040000000000000000000000",
+    "schema": "vec_u16_3"
+   },
+   {
+    "error": "truncated",
+    "hex": "0300000000000000",
+    "schema": "vec_u16_3"
+   },
+   {
+    "error": "trailing_bytes",
+    "hex": "01000000000000",
+    "schema": "vec_u16_3"
+   },
+   {
+    "error": "invalid_enum_tag",
+    "hex": "010003000000796170deadbeef40420f0000000000000100000001000000aa0002",
+    "schema": "sample"
+   },
+   {
+    "error": "trailing_bytes",
+    "hex": "010003000000796170deadbeef40420f0000000000000100000001000000aa000000",
+    "schema": "sample"
+   },
+   {
+    "error": "truncated",
+    "hex": "010003000000796170deadbeef40420f0000000000000100000001000000",
+    "schema": "sample"
+   }
+  ],
+  "valid": [
+   {
+    "hex": "00",
+    "schema": "u8",
+    "value": "0"
+   },
+   {
+    "hex": "ff",
+    "schema": "u8",
+    "value": "255"
+   },
+   {
+    "hex": "0100",
+    "schema": "u16",
+    "value": "1"
+   },
+   {
+    "hex": "ffff",
+    "schema": "u16",
+    "value": "65535"
+   },
+   {
+    "hex": "78563412",
+    "schema": "u32",
+    "value": "305419896"
+   },
+   {
+    "hex": "ffffffff",
+    "schema": "u32",
+    "value": "4294967295"
+   },
+   {
+    "hex": "0000000000000000",
+    "schema": "u64",
+    "value": "0"
+   },
+   {
+    "hex": "0807060504030201",
+    "schema": "u64",
+    "value": "72623859790382856"
+   },
+   {
+    "hex": "ffffffffffffffff",
+    "schema": "u64",
+    "value": "18446744073709551615"
+   },
+   {
+    "hex": "00",
+    "schema": "bool",
+    "value": false
+   },
+   {
+    "hex": "01",
+    "schema": "bool",
+    "value": true
+   },
+   {
+    "hex": "00ff10ab",
+    "schema": "fixed4",
+    "value": "00ff10ab"
+   },
+   {
+    "hex": "00000000",
+    "schema": "bytes8",
+    "value": ""
+   },
+   {
+    "hex": "0100000001",
+    "schema": "bytes8",
+    "value": "01"
+   },
+   {
+    "hex": "080000000102030405060708",
+    "schema": "bytes8",
+    "value": "0102030405060708"
+   },
+   {
+    "hex": "00000000",
+    "schema": "ascii8",
+    "value": ""
+   },
+   {
+    "hex": "080000007961702063686e7e",
+    "schema": "ascii8",
+    "value": "yap chn~"
+   },
+   {
+    "hex": "00",
+    "schema": "option_u32",
+    "value": null
+   },
+   {
+    "hex": "0107000000",
+    "schema": "option_u32",
+    "value": "7"
+   },
+   {
+    "hex": "00000000",
+    "schema": "vec_u16_3",
+    "value": []
+   },
+   {
+    "hex": "030000000100ffff0201",
+    "schema": "vec_u16_3",
+    "value": [
+     "1",
+     "65535",
+     "258"
+    ]
+   },
+   {
+    "hex": "010003000000796170deadbeef40420f000000000000000000000000",
+    "schema": "sample",
+    "value": {
+     "amount": "1000000",
+     "flag": false,
+     "items": [],
+     "kind": {
+      "tag": 0
+     },
+     "maybe": null,
+     "name": "yap",
+     "tag": "deadbeef",
+     "version": "1"
+    }
+   },
+   {
+    "hex": "01000d0000006d656d65732d666f7265766572deadbeefffffffffffffffff012a00000000000000030000000000000001000000aa04000000010203040101ffffffff",
+    "schema": "sample",
+    "value": {
+     "amount": "18446744073709551615",
+     "flag": true,
+     "items": [
+      "",
+      "aa",
+      "01020304"
+     ],
+     "kind": {
+      "tag": 1,
+      "v": "4294967295"
+     },
+     "maybe": "42",
+     "name": "memes-forever",
+     "tag": "deadbeef",
+     "version": "1"
+    }
+   }
+  ]
+ },
+ "version": 1
+}

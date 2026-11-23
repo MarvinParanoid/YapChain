@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: ${{ matrix.arch }} / ${{ matrix.compiler }} / ${{ matrix.preset }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+        compiler: [gcc, clang]
+        preset: [debug, release, asan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build make g++-14 clang-18
+          if [ "${{ matrix.compiler }}" = gcc ]; then
+            echo "CC=gcc-14" >> "$GITHUB_ENV"; echo "CXX=g++-14" >> "$GITHUB_ENV"
+          else
+            echo "CC=clang-18" >> "$GITHUB_ENV"; echo "CXX=clang++-18" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  vectors-reproducible:
+    name: test vectors are reproducible
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate with the independent reference implementation
+        run: |
+          python3 -I tools/refgen/refgen.py --out "$RUNNER_TEMP/vectors"
+          diff -r "$RUNNER_TEMP/vectors" test-vectors
+
+  fuzz:
+    name: libFuzzer (clang, x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build make clang-18 libclang-rt-18-dev
+      - name: Build fuzz targets
+        run: |
+          cmake --preset fuzz -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+          cmake --build --preset fuzz
+      - name: Run each target for 120 s
+        run: |
+          for t in ycs bech32m; do
+            mkdir -p "corpus/$t"
+            ./build/fuzz/tests/fuzz_$t "corpus/$t" -max_total_time=120 -print_final_stats=1
+          done

@@ -1,0 +1,5 @@
+add_library(yap_common STATIC hex.cpp)
+add_library(yap::common ALIAS yap_common)
+target_include_directories(yap_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(yap_common PUBLIC cxx_std_20)
+yap_target_warnings(yap_common)

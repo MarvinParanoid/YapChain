@@ -1,0 +1,60 @@
+# Build directories and generated files
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+compile_commands.json
+CMakeUserPresets.json
+/.cache/
+
+# Fuzzing corpora and crash artifacts
+/corpus/
+crash-*
+leak-*
+timeout-*
+oom-*
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Private keys, keystores and validator/node key material (never commit)
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+keystore/
+keystores/
+*.keystore.json
+priv_validator_key.json
+priv_validator_state.json
+node_key.json
+
+# Local databases and node data
+*.mdb
+*.lmdb
+*.db
+*.sqlite
+*.sqlite3
+/data/
+/.yapchain/
+/.cometbft/
+
+# Secrets and local configuration
+.env
+.env.*
+*.secret
+secrets/
+*.local.toml
+*.local.json
+.claude/settings.local.json
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

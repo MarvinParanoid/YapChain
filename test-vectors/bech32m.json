@@ -1,0 +1,292 @@
+{
+ "generator": "tools/refgen/refgen.py",
+ "vectors": {
+  "invalid": [
+   {
+    "error": "invalid_character",
+    "input": "2031786a3070686b"
+   },
+   {
+    "error": "invalid_character",
+    "input": "7f316736787a7879"
+   },
+   {
+    "error": "invalid_character",
+    "input": "8031766374633334"
+   },
+   {
+    "error": "invalid_length",
+    "input": "616e3834636861726163746572736c6f6e6768756d616e7265616461626c657061727474686174636f6e7461696e737468657468656578636c756465646368617261637465727362696f616e646e756d6265723131643670747334"
+   },
+   {
+    "error": "missing_separator",
+    "input": "7179727a387771643263396d"
+   },
+   {
+    "error": "invalid_hrp",
+    "input": "317179727a387771643263396d"
+   },
+   {
+    "error": "invalid_character",
+    "input": "793162306a736b3667"
+   },
+   {
+    "error": "invalid_character",
+    "input": "6c743169676378356330"
+   },
+   {
+    "error": "data_too_short",
+    "input": "696e316d75797764"
+   },
+   {
+    "error": "invalid_character",
+    "input": "6d6d316372786d3369"
+   },
+   {
+    "error": "invalid_character",
+    "input": "617531733563676f6d"
+   },
+   {
+    "error": "invalid_checksum",
+    "input": "4d3156555857455a"
+   },
+   {
+    "error": "invalid_hrp",
+    "input": "3136706c6b7739"
+   },
+   {
+    "error": "invalid_hrp",
+    "input": "3170326764777066"
+   },
+   {
+    "error": "invalid_checksum",
+    "input": "41313255454c354c"
+   },
+   {
+    "error": "invalid_checksum",
+    "input": "6162636465663171707a7279397838676632747664773073336a6e35346b686365366d7561376c6d7171717877"
+   },
+   {
+    "error": "mixed_case",
+    "input": "614263646566316c3761756d366563686b34356e6a3373307764767432666738783979727a70717a6433727978"
+   }
+  ],
+  "valid": [
+   {
+    "canonical": "a1lqfn3a",
+    "data": [],
+    "hrp": "a",
+    "input": "41314c51464e3341",
+    "text": "A1LQFN3A"
+   },
+   {
+    "canonical": "a1lqfn3a",
+    "data": [],
+    "hrp": "a",
+    "input": "61316c71666e3361",
+    "text": "a1lqfn3a"
+   },
+   {
+    "canonical": "an83characterlonghumanreadablepartthatcontainsthetheexcludedcharactersbioandnumber11sg7hg6",
+    "data": [],
+    "hrp": "an83characterlonghumanreadablepartthatcontainsthetheexcludedcharactersbioandnumber1",
+    "input": "616e38336368617261637465726c6f6e6768756d616e7265616461626c657061727474686174636f6e7461696e737468657468656578636c756465646368617261637465727362696f616e646e756d6265723131736737686736",
+    "text": "an83characterlonghumanreadablepartthatcontainsthetheexcludedcharactersbioandnumber11sg7hg6"
+   },
+   {
+    "canonical": "abcdef1l7aum6echk45nj3s0wdvt2fg8x9yrzpqzd3ryx",
+    "data": [
+     31,
+     30,
+     29,
+     28,
+     27,
+     26,
+     25,
+     24,
+     23,
+     22,
+     21,
+     20,
+     19,
+     18,
+     17,
+     16,
+     15,
+     14,
+     13,
+     12,
+     11,
+     10,
+     9,
+     8,
+     7,
+     6,
+     5,
+     4,
+     3,
+     2,
+     1,
+     0
+    ],
+    "hrp": "abcdef",
+    "input": "616263646566316c3761756d366563686b34356e6a3373307764767432666738783979727a70717a6433727978",
+    "text": "abcdef1l7aum6echk45nj3s0wdvt2fg8x9yrzpqzd3ryx"
+   },
+   {
+    "canonical": "11llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllludsr8",
+    "data": [
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31,
+     31
+    ],
+    "hrp": "1",
+    "input": "31316c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c7564737238",
+    "text": "11llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllludsr8"
+   },
+   {
+    "canonical": "split1checkupstagehandshakeupstreamerranterredcaperredlc445v",
+    "data": [
+     24,
+     23,
+     25,
+     24,
+     22,
+     28,
+     1,
+     16,
+     11,
+     29,
+     8,
+     25,
+     23,
+     29,
+     19,
+     13,
+     16,
+     23,
+     29,
+     22,
+     25,
+     28,
+     1,
+     16,
+     11,
+     3,
+     25,
+     29,
+     27,
+     25,
+     3,
+     3,
+     29,
+     19,
+     11,
+     25,
+     3,
+     3,
+     25,
+     13,
+     24,
+     29,
+     1,
+     25,
+     3,
+     3,
+     25,
+     13
+    ],
+    "hrp": "split",
+    "input": "73706c697431636865636b7570737461676568616e647368616b65757073747265616d657272616e74657272656463617065727265646c6334343576",
+    "text": "split1checkupstagehandshakeupstreamerranterredcaperredlc445v"
+   },
+   {
+    "canonical": "?1v759aa",
+    "data": [],
+    "hrp": "?",
+    "input": "3f31763735396161",
+    "text": "?1v759aa"
+   }
+  ]
+ },
+ "version": 1
+}

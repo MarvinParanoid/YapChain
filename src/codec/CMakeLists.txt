@@ -1,0 +1,5 @@
+add_library(yap_codec STATIC ycs.cpp)
+add_library(yap::codec ALIAS yap_codec)
+target_include_directories(yap_codec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(yap_codec PUBLIC yap::common)
+yap_target_warnings(yap_codec)

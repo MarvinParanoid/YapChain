@@ -1,0 +1,143 @@
+{
+ "generator": "tools/refgen/refgen.py",
+ "vectors": {
+  "decode": [
+   {
+    "account_id": "bf63190b2714d42b303fa41ee82d10dec610de80888b7165294ceb6165fba61c",
+    "expected_hrp": "tyap",
+    "input": "747961703171686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d35637771716679707475",
+    "name": "canonical",
+    "ok": true
+   },
+   {
+    "account_id": "bf63190b2714d42b303fa41ee82d10dec610de80888b7165294ceb6165fba61c",
+    "expected_hrp": "tyap",
+    "input": "545941503151484133334a5a45385a4e325a4b56504c35533057535447534d4d525050483551335a39485a454646464e344b5a45304d35435751514659505455",
+    "name": "uppercase",
+    "ok": true
+   },
+   {
+    "error": "bech32",
+    "expected_hrp": "tyap",
+    "input": "747961703171686133334a5a45385a4e325a4b56504c35533057535447534d4d525050483551335a39485a454646464e344b5a45304d35435751514659505455",
+    "name": "mixed_case",
+    "ok": false
+   },
+   {
+    "error": "wrong_hrp",
+    "expected_hrp": "tyap",
+    "input": "7961703171686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d356377717478716c3566",
+    "name": "mainnet_hrp_rejected_on_testnet",
+    "ok": false
+   },
+   {
+    "account_id": "bf63190b2714d42b303fa41ee82d10dec610de80888b7165294ceb6165fba61c",
+    "expected_hrp": "yap",
+    "input": "7961703171686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d356377717478716c3566",
+    "name": "mainnet_hrp_on_mainnet",
+    "ok": true
+   },
+   {
+    "error": "wrong_version",
+    "expected_hrp": "tyap",
+    "input": "747961703170686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d356377716c7a35796b7a",
+    "name": "version_1",
+    "ok": false
+   },
+   {
+    "error": "bech32",
+    "expected_hrp": "tyap",
+    "input": "747961703171686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d35637771343435647737",
+    "name": "bech32_checksum",
+    "ok": false
+   },
+   {
+    "error": "wrong_length",
+    "expected_hrp": "tyap",
+    "input": "747961703171686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d35636d6c74327963",
+    "name": "payload_31_bytes",
+    "ok": false
+   },
+   {
+    "error": "wrong_length",
+    "expected_hrp": "tyap",
+    "input": "747961703171686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d3563777171383472666163",
+    "name": "payload_33_bytes",
+    "ok": false
+   },
+   {
+    "error": "non_zero_padding",
+    "expected_hrp": "tyap",
+    "input": "747961703171686133336a7a65387a6e327a6b76706c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d35637770616c73356b77",
+    "name": "non_zero_padding",
+    "ok": false
+   },
+   {
+    "error": "wrong_length",
+    "expected_hrp": "tyap",
+    "input": "7479617031656b72677777",
+    "name": "empty_data",
+    "ok": false
+   },
+   {
+    "error": "bech32",
+    "expected_hrp": "tyap",
+    "input": "747961703171686133336a7a65387a6e327a6b76716c35733077737467736d6d727070683571337a39687a656666666e346b7a65306d35637771716679707475",
+    "name": "corrupted_char",
+    "ok": false
+   }
+  ],
+  "hrp": "tyap",
+  "keys": [
+   {
+    "account_id": "bf63190b2714d42b303fa41ee82d10dec610de80888b7165294ceb6165fba61c",
+    "address": "tyap1qha33jze8zn2zkvpl5s0wstgsmmrpph5q3z9hzefffn4kze0m5cwqqfyptu",
+    "pub": "8743d1d2339ad1d4f4217950a41775c375b78c54011a30e7b46ad0ba92590b8b",
+    "seed": "2ea3384dc65ad985fe8dd293b9fed998440275ba8d995270bc990ef5064337c4"
+   },
+   {
+    "account_id": "f72b7e52587d1adb5fcfae99ae09c3f1e397327ba5bcce59064863b198781c85",
+    "address": "tyap1q7u4hu5jc05ddkh7046v6uzwr783ewvnm5k7vukgxfp3mrxrcrjzspfku64",
+    "pub": "5bccff61d0fe25649a89214e7a06d313349ee302f45df7e445a2543493b6dead",
+    "seed": "a997f1d2b075da9d3df5a07f415867e5a526c6b41f2ca11dc5fa436597c6b4da"
+   },
+   {
+    "account_id": "417c49c279487122e035def2ad96a08e7629e1f078328189789ad70fb0ee51b3",
+    "address": "tyap1qg97ynsnefpcj9cp4mme2m94q3emznc0s0qegrztcnttslv8w2xes2vrg0s",
+    "pub": "2a3d044174dfbb30cfb2cbc9326f76c409933a6ae439021c631d46c4044ed0aa",
+    "seed": "287c6224afad21657bf1e843d4a3bcb8c9d5de261442e728ef895b2d15839070"
+   },
+   {
+    "account_id": "f187acdce4521e4e22842b7322605ca9fdfa3038cb93a9ca72b89cfc2e9d82ba",
+    "address": "tyap1q7xr6eh8y2g0yug5y9dejyczu487l5vpcewf6njnjhzw0ct5as2aq75sqsv",
+    "pub": "30e1419789c3c689897be7a058595764a55980a2a3e6c448e6788f6759ccc7b1",
+    "seed": "f5bec530434aebd824087e2a4fff41af8412b41dcd68ed379eaf56654772ddf7"
+   },
+   {
+    "account_id": "6429f788c84d87179cad46498648dde03f1bd9be81703a5e66e508f7f28dfd5c",
+    "address": "tyap1qvs5l0zxgfkr3089dgeycvjxauql3hkd7s9cr5hnxu5y00u5dl4wqhkmh27",
+    "pub": "fdf7789122e8b9c6f1251161b9cde325a90977f22a1f1fe5eb4074d9417cbc5e",
+    "seed": "5e3bab54c34cb04f78cbbaa6418a5838e9eea81d21eabb79f16ebb7f4c9ea8a3"
+   },
+   {
+    "account_id": "4439f03aa02028d14d75693b65c998e84c6a54f82e668bb1d839864a0815b597",
+    "address": "tyap1qgsulqw4qyq5dznt4dyaktjvcapxx548c9enghvwc8xry5zq4kktsmnp9d0",
+    "pub": "fc7096dac436ebc5d688474a3ed8b5f9f280009f9eaa4dbe51532bb40b0e8161",
+    "seed": "53962f346da1d5486e74b83524882c752eeb850517775b0fd52e6dcaa32262fe"
+   }
+  ],
+  "system_accounts": [
+   {
+    "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+    "address": "tyap1qxrnvv39zmmn2pxqyztal78mwrlrf7khr7r96upgyaxffav95qussasnysv",
+    "name": "treasury"
+   },
+   {
+    "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+    "address": "tyap1qrkm74r2rvwzk9g5fw67cxstf3me2m2eu6zec6w7qgsusnyvde00qchz2ah",
+    "name": "rewards-pool"
+   }
+  ]
+ },
+ "version": 1
+}
