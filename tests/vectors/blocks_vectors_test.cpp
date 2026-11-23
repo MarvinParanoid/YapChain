@@ -3,10 +3,12 @@
 // Block execution against the independent Python reference (tools/refgen/exec_ref.py).
 #include <catch2/catch_test_macros.hpp>
 
+#include "temp_dir.hpp"
 #include "vector_util.hpp"
 #include "yap/chain/engine.hpp"
 #include "yap/state/state.hpp"
 #include "yap/state/state_root.hpp"
+#include "yap/storage/lmdb_store.hpp"
 
 using namespace yap;
 using test::jhex;
@@ -28,11 +30,11 @@ state::BlockContext context_of(const json& b, const std::string& chain_id) {
     return c;
 }
 
-/// Runs a scenario and returns the state root after every block.
-std::vector<Hash32> run_scenario(const json& sc) {
+/// Runs a scenario on `store` and returns the state root after every block.
+std::vector<Hash32> run_scenario(const json& sc, storage::KvStore& store) {
     auto g = chain::parse_genesis_json(sc.at("genesis").get<std::string>());
     REQUIRE(g.has_value());
-    chain::Engine e;
+    chain::Engine e(store);
     CHECK(to_hex(e.init_chain(*g)) == sc.at("genesis_root").get<std::string>());
 
     std::vector<Hash32> roots;
@@ -83,7 +85,8 @@ TEST_CASE("block execution vectors match the independent reference", "[vectors][
     std::size_t blocks = 0;
     for (const auto& sc : vec.at("scenarios")) {
         INFO("scenario " << sc.at("name").get<std::string>());
-        blocks += run_scenario(sc).size();
+        storage::MemoryStore store;
+        blocks += run_scenario(sc, store).size();
     }
     CHECK(blocks >= 50);
 }
@@ -92,8 +95,20 @@ TEST_CASE("re-execution of every scenario yields identical state roots", "[vecto
     const auto vec = test::load_vectors("blocks.json");
     for (const auto& sc : vec.at("scenarios")) {
         INFO("scenario " << sc.at("name").get<std::string>());
-        const auto first = run_scenario(sc);
-        const auto second = run_scenario(sc);
+        storage::MemoryStore s1, s2;
+        const auto first = run_scenario(sc, s1);
+        const auto second = run_scenario(sc, s2);
         CHECK(first == second);
+    }
+}
+
+TEST_CASE("MemoryStore and LMDB produce identical roots on every block", "[vectors][blocks][lmdb]") {
+    const auto vec = test::load_vectors("blocks.json");
+    for (const auto& sc : vec.at("scenarios")) {
+        INFO("scenario " << sc.at("name").get<std::string>());
+        storage::MemoryStore mem;
+        test::TempDir dir;
+        storage::LmdbStore lmdb({dir.path()});
+        CHECK(run_scenario(sc, mem) == run_scenario(sc, lmdb));
     }
 }

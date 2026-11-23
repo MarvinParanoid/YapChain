@@ -2,7 +2,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ledger_fixture.hpp"
+#include "temp_dir.hpp"
 #include "yap/chain/engine.hpp"
+#include "yap/storage/lmdb_store.hpp"
 #include "yap/state/state.hpp"
 #include "yap/state/state_root.hpp"
 
@@ -46,7 +48,8 @@ state::BlockContext ctx(const chain::Genesis& g, std::uint64_t height, std::vect
 
 TEST_CASE("engine lifecycle: init, finalize, commit, info", "[engine]") {
     const auto g = genesis();
-    chain::Engine e;
+    storage::MemoryStore store;
+    chain::Engine e(store);
     const Hash32 genesis_root = e.init_chain(g);
     CHECK(e.info().last_height == 0);
     CHECK(e.info().last_state_root == genesis_root);
@@ -66,7 +69,8 @@ TEST_CASE("engine lifecycle: init, finalize, commit, info", "[engine]") {
 
 TEST_CASE("process_proposal rejects a block with any invalid tx and never mutates state", "[engine]") {
     const auto g = genesis();
-    chain::Engine e;
+    storage::MemoryStore store;
+    chain::Engine e(store);
     e.init_chain(g);
     const auto good = transfer_tx(kAlice, id_of(kBob), 10, 0);
     const auto bad = transfer_tx(kBob, id_of(kAlice), 1'000'000, 0);  // insufficient funds
@@ -84,7 +88,8 @@ TEST_CASE("process_proposal rejects a block with any invalid tx and never mutate
 
 TEST_CASE("process_proposal ACCEPT implies all-OK finalize_block", "[engine]") {
     const auto g = genesis();
-    chain::Engine e;
+    storage::MemoryStore store;
+    chain::Engine e(store);
     e.init_chain(g);
     std::vector<Bytes> txs;
     for (std::uint64_t n = 0; n < 10; ++n) txs.push_back(transfer_tx(kAlice, id_of(kBob), 1 + n, n));
@@ -95,7 +100,8 @@ TEST_CASE("process_proposal ACCEPT implies all-OK finalize_block", "[engine]") {
 
 TEST_CASE("prepare_proposal keeps valid txs in order within the byte budget", "[engine]") {
     const auto g = genesis();
-    chain::Engine e;
+    storage::MemoryStore store;
+    chain::Engine e(store);
     e.init_chain(g);
     const auto t0 = transfer_tx(kAlice, id_of(kBob), 1, 0);
     const auto dup = t0;                                       // replay: nonce already used
@@ -113,7 +119,8 @@ TEST_CASE("prepare_proposal keeps valid txs in order within the byte budget", "[
 
 TEST_CASE("check_tx tracks the mempool state and resets on commit", "[engine]") {
     const auto g = genesis();
-    chain::Engine e;
+    storage::MemoryStore store;
+    chain::Engine e(store);
     e.init_chain(g);
     CHECK(e.check_tx(transfer_tx(kAlice, id_of(kBob), 1, 0)).code == TxCode::Ok);
     CHECK(e.check_tx(transfer_tx(kAlice, id_of(kBob), 1, 1)).code == TxCode::Ok);   // follows the accepted one
@@ -127,7 +134,8 @@ TEST_CASE("check_tx tracks the mempool state and resets on commit", "[engine]") 
 
 TEST_CASE("invalid block context is fail-stop and leaves nothing pending", "[engine]") {
     const auto g = genesis();
-    chain::Engine e;
+    storage::MemoryStore store;
+    chain::Engine e(store);
     e.init_chain(g);
     auto wrong_height = ctx(g, 2, {});
     CHECK_THROWS_AS(e.finalize_block(wrong_height), FailStop);
@@ -148,6 +156,128 @@ TEST_CASE("invalid block context is fail-stop and leaves nothing pending", "[eng
 TEST_CASE("init_chain rejects an invalid genesis", "[engine]") {
     auto g = genesis();
     g.validators.clear();
-    chain::Engine e;
+    storage::MemoryStore store;
+    chain::Engine e(store);
     CHECK_THROWS_AS(e.init_chain(g), std::invalid_argument);
+}
+
+// ------------------------------------------------------------------ durability (M1.3b)
+
+namespace {
+state::ChainState chain_state_of(const chain::Engine& e) {
+    state::Overlay view(&e.committed());
+    return state::State(view).chain_state();
+}
+}  // namespace
+
+TEST_CASE("committed heights survive reopening the LMDB store", "[engine][lmdb]") {
+    const auto g = genesis();
+    test::TempDir dir;
+    Hash32 root3{};
+    {
+        storage::LmdbStore store({dir.path()});
+        chain::Engine e(store);
+        e.init_chain(g);
+        for (std::uint64_t h = 1; h <= 3; ++h) {
+            e.finalize_block(ctx(g, h, {transfer_tx(kAlice, id_of(kBob), h, h - 1)}));
+            root3 = e.commit();
+        }
+        // A finalized but uncommitted block is not durable.
+        e.finalize_block(ctx(g, 4, {transfer_tx(kAlice, id_of(kBob), 9, 3)}));
+    }
+    storage::LmdbStore store({dir.path()});
+    chain::Engine e(store);
+    REQUIRE(e.initialized());
+    CHECK(e.info().last_height == 3);
+    CHECK(e.info().last_state_root == root3);
+    CHECK(state::state_root(e.committed()) == root3);
+    CHECK_NOTHROW(state::check_invariants(e.committed()));
+    const auto rec = e.block_record(3);
+    REQUIRE(rec.has_value());
+    CHECK(rec->state_root == root3);
+    CHECK(rec->codes == std::vector<std::uint32_t>{0});
+    CHECK_FALSE(e.block_record(4).has_value());
+}
+
+TEST_CASE("a committed height cannot be applied again (no double emission)", "[engine]") {
+    const auto g = genesis();
+    storage::MemoryStore store;
+    chain::Engine e(store);
+    e.init_chain(g);
+    e.finalize_block(ctx(g, 1, {}));
+    e.commit();
+    const auto minted = chain_state_of(e).total_minted;
+    CHECK_THROWS_AS(e.commit(), std::logic_error);           // second Commit without FinalizeBlock
+    CHECK_THROWS_AS(e.finalize_block(ctx(g, 1, {})), FailStop);  // replaying height 1
+    chain::Engine restarted(store);
+    CHECK_THROWS_AS(restarted.finalize_block(ctx(g, 1, {})), FailStop);
+    CHECK(chain_state_of(restarted).total_minted == minted);
+}
+
+TEST_CASE("a failing commit keeps the previous height and the pending block", "[engine]") {
+    const auto g = genesis();
+    storage::MemoryStore store;
+    chain::Engine e(store);
+    const auto genesis_root = e.init_chain(g);
+    const auto r = e.finalize_block(ctx(g, 1, {transfer_tx(kAlice, id_of(kBob), 5, 0)}));
+    const auto before = dump(e.committed());
+
+    storage::set_fault_hook([](std::string_view p) {
+        if (p == "after_chain_state") throw std::runtime_error("disk on fire");
+    });
+    CHECK_THROWS_AS(e.commit(), std::runtime_error);
+    storage::set_fault_hook({});
+    CHECK(e.info().last_height == 0);
+    CHECK(e.info().last_state_root == genesis_root);
+    CHECK(dump(e.committed()) == before);
+
+    CHECK(e.commit() == r.state_root);  // retry of the same pending block succeeds once
+    CHECK(e.info().last_height == 1);
+    CHECK_THROWS_AS(e.commit(), std::logic_error);
+}
+
+TEST_CASE("MAP_FULL during commit is reported and recoverable", "[engine][lmdb]") {
+    const auto g = genesis();
+    test::TempDir dir;
+    std::uint64_t committed_height = 0;
+    Hash32 committed_root{};
+    state::BlockContext failed_block;
+    {
+        storage::LmdbStore::Options small{dir.path()};
+        small.map_size = 256 * 1024;
+        storage::LmdbStore store(small);
+        chain::Engine e(store);
+        e.init_chain(g);
+        bool full = false;
+        for (std::uint64_t h = 1; h <= 200 && !full; ++h) {
+            std::vector<Bytes> txs;
+            for (std::uint64_t i = 0; i < 20; ++i) {
+                const auto nonce = (h - 1) * 20 + i;
+                txs.push_back(transfer_tx(kAlice, crypto::system_account_id("sink-" + std::to_string(nonce)), 1, nonce));
+            }
+            auto c = ctx(g, h, txs);
+            e.finalize_block(c);
+            try {
+                e.commit();
+            } catch (const storage::StorageFull&) {
+                full = true;
+                failed_block = c;
+                CHECK(e.info().last_height == h - 1);
+                CHECK(state::state_root(e.committed()) == e.info().last_state_root);
+            }
+        }
+        REQUIRE(full);
+        committed_height = e.info().last_height;
+        committed_root = e.info().last_state_root;
+    }
+    storage::LmdbStore::Options big{dir.path()};
+    big.map_size = 64 * 1024 * 1024;
+    storage::LmdbStore store(big);
+    chain::Engine e(store);
+    CHECK(e.info().last_height == committed_height);
+    CHECK(e.info().last_state_root == committed_root);
+    e.finalize_block(failed_block);
+    CHECK_NOTHROW(e.commit());
+    CHECK(e.info().last_height == committed_height + 1);
+    CHECK_NOTHROW(state::check_invariants(e.committed()));
 }

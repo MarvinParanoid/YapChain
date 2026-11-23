@@ -58,6 +58,9 @@ public:
     /// Applies all changes to a store (which must be this overlay's base) and clears this one.
     void apply_to(MemoryKvStore& store);
     [[nodiscard]] bool empty() const noexcept { return changes_.empty(); }
+    /// The pending changes in ascending key order (nullopt = deletion).
+    [[nodiscard]] const std::map<Bytes, std::optional<Bytes>>& changes() const noexcept { return changes_; }
+    [[nodiscard]] const KvReader* base() const noexcept { return base_; }
 
 private:
     const KvReader* base_;

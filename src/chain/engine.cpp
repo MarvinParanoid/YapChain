@@ -8,46 +8,100 @@
 
 namespace yap::chain {
 
+using storage::Table;
+
+Engine::Engine(storage::KvStore& store) : store_(&store), state_view_(store, Table::State) {
+    if (auto raw = store_->get(Table::Meta, meta_key())) {
+        auto meta = ycs::decode<StoreMeta>(*raw);
+        if (!meta) throw storage::StorageError("store metadata is unreadable or has an unsupported schema version");
+        meta_ = std::move(meta).value();
+    }
+}
+
 void Engine::require_initialized() const {
-    if (!initialized_) throw std::logic_error("Engine: init_chain has not been called");
+    if (!meta_) throw std::logic_error("Engine: init_chain has not been called");
+}
+
+void Engine::append_state_changes(storage::WriteBatch& batch, const state::Overlay& changes) const {
+    // Deterministic order with named fault points: accounts, ChainState, everything else.
+    std::vector<const std::pair<const Bytes, std::optional<Bytes>>*> accounts;
+    for (const auto& kv : changes.changes()) {
+        if (kv.first[0] == state::ns::kAccount) accounts.push_back(&kv);
+    }
+    auto emit = [&batch](const Bytes& k, const std::optional<Bytes>& v) {
+        if (v) {
+            batch.put(Table::State, k, *v);
+        } else {
+            batch.erase(Table::State, k);
+        }
+    };
+    for (std::size_t i = 0; i < accounts.size(); ++i) {
+        if (i == accounts.size() / 2) batch.mark("mid_accounts");
+        emit(accounts[i]->first, accounts[i]->second);
+    }
+    batch.mark("after_accounts");
+    for (const auto& [k, v] : changes.changes()) {
+        if (k[0] == state::ns::kChainState) emit(k, v);
+    }
+    batch.mark("after_chain_state");
+    for (const auto& [k, v] : changes.changes()) {
+        if (k[0] != state::ns::kAccount && k[0] != state::ns::kChainState) emit(k, v);
+    }
 }
 
 Hash32 Engine::init_chain(const Genesis& genesis) {
-    if (initialized_ || !committed_.empty()) throw std::logic_error("Engine: already initialised");
+    if (meta_) throw std::logic_error("Engine: already initialised");
+    bool empty = true;
+    for (std::size_t t = 0; t < storage::kTableCount && empty; ++t) {
+        store_->for_each(static_cast<Table>(t), [&empty](const Bytes&, const Bytes&) { empty = false; });
+    }
+    if (!empty) throw storage::StorageError("refusing to initialise a non-empty store without metadata");
     if (auto err = validate_genesis(genesis); !err.empty()) throw std::invalid_argument("invalid genesis: " + err);
-    state::Overlay o(&committed_);
+
+    state::Overlay o(&state_view_);
     write_initial_state(genesis, o);
     state::check_invariants(o);
-    o.apply_to(committed_);
-    chain_id_ = genesis.chain_id;
-    last_state_root_ = state::state_root(committed_);
-    initialized_ = true;
-    return last_state_root_;
+    const Hash32 root = state::state_root(o);
+
+    StoreMeta meta{kSchemaVersion, genesis.chain_id, genesis_hash(genesis), 0, root};
+    storage::WriteBatch batch;
+    append_state_changes(batch, o);
+    batch.mark("after_smt");
+    batch.put(Table::Meta, meta_key(), ycs::encode(meta));
+    store_->write(batch);  // durable before InitChain returns
+    meta_ = meta;
+    return root;
 }
 
 Info Engine::info() const {
     require_initialized();
-    state::Overlay view(&committed_);
-    return {chain_id_, state::State(view).chain_state().height, last_state_root_};
+    return {meta_->chain_id, meta_->last_height, meta_->last_state_root};
+}
+
+std::optional<BlockRecord> Engine::block_record(std::uint64_t height) const {
+    auto raw = store_->get(Table::Results, results_key(height));
+    if (!raw) return std::nullopt;
+    auto rec = ycs::decode<BlockRecord>(*raw);
+    if (!rec) throw storage::StorageError("corrupted block record");
+    return std::move(rec).value();
 }
 
 CheckResult Engine::check_tx(ByteView tx_bytes) {
     require_initialized();
-    if (!check_state_) check_state_ = std::make_unique<state::Overlay>(&committed_);
-    const std::uint64_t height = info().last_height + 1;
-    auto r = state::execute_tx(*check_state_, tx_bytes, height, chain_id_);
+    if (!check_state_) check_state_ = std::make_unique<state::Overlay>(&state_view_);
+    auto r = state::execute_tx(*check_state_, tx_bytes, meta_->last_height + 1, meta_->chain_id);
     return {r.code, std::move(r.log)};
 }
 
 std::vector<Bytes> Engine::prepare_proposal(const state::BlockContext& ctx, const std::vector<Bytes>& candidates,
                                             std::uint64_t max_bytes) const {
     require_initialized();
-    state::Overlay scratch(&committed_);
+    state::Overlay scratch(&state_view_);
     std::vector<Bytes> out;
     std::uint64_t used = 0;
     for (const auto& tx : candidates) {
         if (tx.size() > max_bytes - used) continue;  // used <= max_bytes always holds
-        if (state::execute_tx(scratch, tx, ctx.height, chain_id_).code != tx::TxCode::Ok) continue;
+        if (state::execute_tx(scratch, tx, ctx.height, meta_->chain_id).code != tx::TxCode::Ok) continue;
         used += tx.size();
         out.push_back(tx);
     }
@@ -56,8 +110,8 @@ std::vector<Bytes> Engine::prepare_proposal(const state::BlockContext& ctx, cons
 
 bool Engine::process_proposal(const state::BlockContext& ctx) const {
     require_initialized();
-    state::Overlay scratch(&committed_);  // discarded: ProcessProposal never changes the state
-    const auto result = state::execute_block(scratch, chain_id_, ctx);
+    state::Overlay scratch(&state_view_);  // discarded: ProcessProposal never changes the state
+    const auto result = state::execute_block(scratch, meta_->chain_id, ctx);
     for (const auto& r : result.tx_results) {
         if (r.code != tx::TxCode::Ok) return false;
     }
@@ -67,22 +121,38 @@ bool Engine::process_proposal(const state::BlockContext& ctx) const {
 state::BlockResult Engine::finalize_block(const state::BlockContext& ctx) {
     require_initialized();
     if (pending_) throw std::logic_error("Engine: finalize_block called twice without commit");
-    auto overlay = std::make_unique<state::Overlay>(&committed_);
-    auto result = state::execute_block(*overlay, chain_id_, ctx);  // throws FailStop: nothing kept
+    auto overlay = std::make_unique<state::Overlay>(&state_view_);
+    auto result = state::execute_block(*overlay, meta_->chain_id, ctx);  // throws FailStop: nothing kept
     pending_ = std::move(overlay);
     pending_result_ = result;
+    pending_height_ = ctx.height;
     return result;
 }
 
 Hash32 Engine::commit() {
     require_initialized();
     if (!pending_) throw std::logic_error("Engine: commit without finalize_block");
-    pending_->apply_to(committed_);
+
+    StoreMeta next = *meta_;
+    next.last_height = pending_height_;
+    next.last_state_root = pending_result_->state_root;
+    BlockRecord record{pending_height_, pending_result_->state_root, {}};
+    for (const auto& r : pending_result_->tx_results) record.codes.push_back(static_cast<std::uint32_t>(r.code));
+
+    storage::WriteBatch batch;
+    append_state_changes(batch, *pending_);
+    batch.mark("after_smt");
+    batch.put(Table::Results, results_key(pending_height_), ycs::encode(record));
+    batch.put(Table::Meta, meta_key(), ycs::encode(next));
+
+    store_->write(batch);  // throws on failure: meta_ and pending_ are left untouched
+
+    // Only now is the height committed.
+    meta_ = next;
     pending_.reset();
-    last_state_root_ = pending_result_->state_root;
     pending_result_.reset();
     check_state_.reset();  // mempool transactions are re-checked against the new state
-    return last_state_root_;
+    return next.last_state_root;
 }
 
 }  // namespace yap::chain
