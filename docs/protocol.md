@@ -15,6 +15,8 @@
   ([ADR-0019](adr/0019-normative-check-order.md)), уточнения `ProcessProposal`/`FinalizeBlock`.
 - r3 — строгая проверка публичных ключей валидаторов (§5.7, §11.2 п. 4,
   [ADR-0020](adr/0020-validator-public-key-validation.md)). Правила проверки подписей (§5.2) не изменены.
+- r4 — зачисление 0 yip не меняет state (§9.3); схема genesis JSON и выбор HRP (§11.3); недопустимый `flag` в
+  `last_commit` — fail-stop (§9.1) ([ADR-0021](adr/0021-zero-credit-and-genesis-json.md)).
 
 ## 1. Обозначения и арифметика
 
@@ -467,8 +469,8 @@ BlockContext {
 - на высоте `initial_height = 1` список **пуст** (блока 0 не существует);
 - на высоте `H ≥ 2` содержит по одной записи на каждого валидатора набора высоты `H−1`; подписавшими считаются
   только записи с `flag = Commit`; `Nil` (голосовал против) и `Absent` наград не получают;
-- адаптер ДОЛЖЕН проверить: каждый `validator_address` присутствует в `ValidatorInfo`, адреса не повторяются,
-  `power` совпадает с `ValidatorInfo.power`. Нарушение — fail-stop (консенсус уже проверил подписи; несовпадение
+- адаптер ДОЛЖЕН проверить: на высоте 1 список пуст; `flag ∈ {1, 2, 3}`; каждый `validator_address` присутствует
+  в `ValidatorInfo`, адреса не повторяются, `power` совпадает с `ValidatorInfo.power`. Нарушение — fail-stop (консенсус уже проверил подписи; несовпадение
   означает рассинхронизацию набора валидаторов между CometBFT и state).
 - Состав `last_commit` выбирает proposer блока `H` (любые > 2/3 power плюс опоздавшие голоса, которые он успел
   получить), поэтому он детерминирован для всех нод, но не обязательно включает всех подписавших (threat-model.md, №15).
@@ -489,6 +491,11 @@ BlockContext {
 
 ### 9.3 Эффекты операций
 Все операции checked; ошибка → `ERR_OVERFLOW` и откат tx (§1.1).
+
+**Нулевые суммы (r4, ADR-0021).** Зачисление `0` yip на аккаунт — no-op: несуществующий аккаунт **не создаётся**,
+существующая запись не перезаписывается. Правило действует везде, где аккаунт пополняется: эффекты транзакций, доля
+Treasury в комиссии (`fee − burn_part` может быть 0 при `fee_burn_bps = 10000`) и эмиссия §9.5 (`share_i`, `p`, `t`
+могут быть 0). Аккаунт появляется в state только при зачислении `≥ 1` yip (или из genesis, где `balance ≥ 1`).
 
 **Transfer** `{to, amount}`: `sender.balance −= amount + fee; to.balance += amount`.
 
@@ -594,6 +601,35 @@ Genesis YapChain хранится в поле `app_state` файла `genesis.js
 - Адреса — Bech32m (§5.3); ключи — hex нижнего регистра, ровно 64 символа.
 - Неизвестные поля и повторяющиеся ключи объектов — ошибка.
 - Хеш считается **только** по YCS; JSON на `genesis_hash` не влияет.
+- **HRP адресов** в genesis определяется по `chain_id`: `"yap"` — если `chain_id` равен `chain_id` mainnet (пока OPEN,
+  не определён), иначе `"tyap"`. Адрес с другим HRP — ошибка.
+- **Схема (r4, ADR-0021).** Корень — объект ровно с полями ниже; порядок ключей не важен, порядок элементов массивов —
+  нормативный (§11.2: строго по возрастанию, иначе ошибка). Типы: `"u64"` — десятичная строка; `u8/u16/u32` —
+  JSON-число; `addr` — Bech32m; `hex32` — 64 hex-символа нижнего регистра; `str` — JSON-строка.
+
+```
+{
+  "chain_id":        str,
+  "genesis_time_ms": "u64",
+  "initial_height":  "u64",
+  "params": {
+    "min_fee": "u64", "fee_burn_bps": u16, "block_reward": "u64",
+    "reward_validators_bps": u16, "reward_pool_bps": u16, "reward_treasury_bps": u16,
+    "max_issuance": "u64", "max_tx_bytes": u32, "max_memo_bytes": u32,
+    "max_tx_ttl_blocks": "u64", "epoch_length_blocks": "u64",
+    "max_attestation_validity_s": "u64", "attestation_clock_skew_s": "u64",
+    "max_claims_per_subject_per_epoch": u16
+  },
+  "accounts":   [ { "address": addr, "balance": "u64" } ],
+  "validators": [ { "consensus_pubkey": hex32, "power": "u64", "reward_account": addr, "name": str } ],
+  "issuers":    [ { "issuer_id": u32, "name": str, "status": u8, "epoch_budget": "u64",
+                    "keys": [ { "key_id": u8, "pubkey": hex32, "status": u8 } ] } ],
+  "achievements": [ { "issuer_id": u32, "achievement_id": u32, "reward": "u64", "policy": u8,
+                      "max_per_epoch": u16, "status": u8 } ]
+}
+```
+  Каждое поле обязательно; массивы могут быть пустыми, если §11.2 это допускает. `name` и `chain_id` проходят те же
+  правила содержимого, что и в YCS (§2, §3.3).
 
 ### 11.4 InitChain
 1. `chain_id` запроса совпадает с `Genesis.chain_id`; `initial_height == 1`; время запроса в мс равно
