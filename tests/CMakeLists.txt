@@ -15,7 +15,8 @@ if(YAP_BUILD_TESTS)
     unit/address_test.cpp
     unit/tx_test.cpp
     unit/validation_test.cpp
-    unit/ledger_test.cpp)
+    unit/ledger_test.cpp
+    unit/economics_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
@@ -23,7 +24,8 @@ if(YAP_BUILD_TESTS)
   add_executable(yap_vector_tests
     vectors/vectors_test.cpp
     vectors/tx_vectors_test.cpp
-    vectors/validation_vectors_test.cpp)
+    vectors/validation_vectors_test.cpp
+    vectors/economics_vectors_test.cpp)
   target_link_libraries(yap_vector_tests PRIVATE yap_test_support nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
   target_compile_definitions(yap_vector_tests PRIVATE YAP_TEST_VECTORS_DIR="${PROJECT_SOURCE_DIR}/test-vectors")
   yap_target_warnings(yap_vector_tests)

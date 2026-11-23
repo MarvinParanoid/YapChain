@@ -1,0 +1,824 @@
+{
+ "generator": "tools/refgen/refgen.py",
+ "vectors": {
+  "cases": [
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "600000"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "200000"
+     },
+     {
+      "account_id": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d",
+      "amount": "300000"
+     },
+     {
+      "account_id": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354",
+      "amount": "300000"
+     },
+     {
+      "account_id": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe",
+      "amount": "300000"
+     },
+     {
+      "account_id": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e",
+      "amount": "300000"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 2,
+      "power": "10"
+     }
+    ],
+    "minted": "2000000",
+    "name": "all_four_signed",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "0",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "600000"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "200000"
+     },
+     {
+      "account_id": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d",
+      "amount": "400000"
+     },
+     {
+      "account_id": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354",
+      "amount": "400000"
+     },
+     {
+      "account_id": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe",
+      "amount": "400000"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 1,
+      "power": "10"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 2,
+      "power": "10"
+     }
+    ],
+    "minted": "2000000",
+    "name": "three_of_four_signed_one_absent",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "0",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "600000"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "200000"
+     },
+     {
+      "account_id": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d",
+      "amount": "400000"
+     },
+     {
+      "account_id": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe",
+      "amount": "400000"
+     },
+     {
+      "account_id": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e",
+      "amount": "400000"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 3,
+      "power": "10"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 2,
+      "power": "10"
+     }
+    ],
+    "minted": "2000000",
+    "name": "nil_vote_gets_nothing",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "0",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "600000"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "1400000"
+     }
+    ],
+    "last_commit": [],
+    "minted": "2000000",
+    "name": "height_1_empty_commit",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "0",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "600000"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "1400000"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 1,
+      "power": "10"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 3,
+      "power": "10"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 1,
+      "power": "10"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 1,
+      "power": "10"
+     }
+    ],
+    "minted": "2000000",
+    "name": "nobody_signed",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "0",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "300000"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "100003"
+     },
+     {
+      "account_id": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d",
+      "amount": "180000"
+     },
+     {
+      "account_id": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354",
+      "amount": "420000"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "3"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 2,
+      "power": "7"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 1,
+      "power": "1"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 1,
+      "power": "2"
+     }
+    ],
+    "minted": "1000003",
+    "name": "unequal_power_remainder",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "1000003",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "0",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "3",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "7",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "1",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "2",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "333299"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "333403"
+     },
+     {
+      "account_id": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d",
+      "amount": "111099"
+     },
+     {
+      "account_id": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354",
+      "amount": "111099"
+     },
+     {
+      "account_id": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e",
+      "amount": "111099"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "5"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 2,
+      "power": "5"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 2,
+      "power": "5"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 1,
+      "power": "5"
+     }
+    ],
+    "minted": "999999",
+    "name": "odd_split_bps",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "999999",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3333",
+     "reward_treasury_bps": "3334",
+     "reward_validators_bps": "3333"
+    },
+    "total_minted_before": "0",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "5",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "5",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "5",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "5",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "1db7ea8d43638562a28976bd8341698ef2adab3cd0b38d3bc0443909918dcbde",
+      "amount": "1"
+     },
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "4"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 2,
+      "power": "10"
+     }
+    ],
+    "minted": "5",
+    "name": "partial_last_reward",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "999999999999995",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [
+     {
+      "account_id": "30e6c644a2dee6a0980412fbff1f6e1fc69f5ae3f0cbae0504e9929eb0b40721",
+      "amount": "1"
+     }
+    ],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 2,
+      "power": "10"
+     }
+    ],
+    "minted": "1",
+    "name": "one_yip_left",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "999999999999999",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   },
+   {
+    "credits": [],
+    "last_commit": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "flag": 2,
+      "power": "10"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "flag": 2,
+      "power": "10"
+     }
+    ],
+    "minted": "0",
+    "name": "cap_reached",
+    "params": {
+     "attestation_clock_skew_s": "300",
+     "block_reward": "2000000",
+     "epoch_length_blocks": "43200",
+     "fee_burn_bps": "5000",
+     "max_attestation_validity_s": "604800",
+     "max_claims_per_subject_per_epoch": "20",
+     "max_issuance": "1000000000000000",
+     "max_memo_bytes": "128",
+     "max_tx_bytes": "4096",
+     "max_tx_ttl_blocks": "1800",
+     "min_fee": "1000",
+     "reward_pool_bps": "3000",
+     "reward_treasury_bps": "1000",
+     "reward_validators_bps": "6000"
+    },
+    "total_minted_before": "1000000000000000",
+    "validators": [
+     {
+      "address": "0afe97a3593f38a7ef1f9952ccd8864e83de6af7",
+      "consensus_pubkey": "cd06beabcd9aebe9220356f58c3181a2f277048d2c22e1ae66977434ded34283",
+      "power": "10",
+      "reward_account": "458701fa5ff1bd7413743d8386bbad185c57d2f895802a589534925341046c1d"
+     },
+     {
+      "address": "4919291db1444a5b2bf877888cce0fb28153368a",
+      "consensus_pubkey": "be668a02ce38edbaefbcb1e592f517739e453d2f9037c856ddf3827c482daafc",
+      "power": "10",
+      "reward_account": "507de3ca09ba1d21036912053cdb2c26b80764eb7b2c00021002ed6f967bf354"
+     },
+     {
+      "address": "67d006730fa2566f106f94e06910c3a4176d66f5",
+      "consensus_pubkey": "44ed9c7d0bd1ceface08f7f367b9fbc0154f17ea3e565acf3dbd00f365e22218",
+      "power": "10",
+      "reward_account": "7b0109f17756c9af1ea14c59bf283a1f05b054a4fd120a2ee18c04cfc4d57d9e"
+     },
+     {
+      "address": "71b1b8004910391aeb194a4de505960ebf9dfb61",
+      "consensus_pubkey": "9bef3d32631a33911c62875274f6e4e091fc52f1a7c776141c9004d3699fa75c",
+      "power": "10",
+      "reward_account": "6774db64d65667a3c39f2bc820b46936474dd5253c12f7c113669a113326a5fe"
+     }
+    ]
+   }
+  ]
+ },
+ "version": 1
+}

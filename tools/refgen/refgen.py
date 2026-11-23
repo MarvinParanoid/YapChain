@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bech32m_ref as b32  # noqa: E402
 import ed25519_ref as ed  # noqa: E402
+import economics_ref as econ  # noqa: E402
 import tx_ref  # noqa: E402
 from ycs_ref import DecodeError  # noqa: E402
 import ycs_ref as ycs  # noqa: E402
@@ -599,6 +600,49 @@ def gen_validation():
             "cases": out}
 
 
+# --------------------------------------------------------------------------- economics
+def gen_economics():
+    base = dict(tx_ref.TESTNET_PARAMS)
+    vals = []
+    for i in range(4):
+        pub = ed.public_key(seed(300 + i))
+        addr = hashlib.sha256(pub).digest()[:20]
+        vals.append({"address": addr, "pub": pub, "reward_account": account_id(ed.public_key(seed(400 + i)))})
+    by_addr = sorted(vals, key=lambda x: x["address"])
+
+    def run(name, powers, flags, total_minted=0, **param_over):
+        params = dict(base, **param_over)
+        validators = {v["address"]: (pw, v["reward_account"]) for v, pw in zip(by_addr, powers)}
+        commit = [(v["address"], pw, f) for v, pw, f in zip(by_addr, powers, flags) if f is not None]
+        credits, minted = econ.emission(params, total_minted, commit, validators)
+        return {"name": name,
+                "params": {k: str(v) for k, v in params.items()},
+                "total_minted_before": str(total_minted),
+                "validators": [{"consensus_pubkey": hx(v["pub"]), "address": hx(v["address"]), "power": str(pw),
+                                "reward_account": hx(v["reward_account"])} for v, pw in zip(by_addr, powers)],
+                "last_commit": [{"address": hx(a), "power": str(pw), "flag": f} for a, pw, f in commit],
+                "minted": str(minted),
+                "credits": [{"account_id": hx(k), "amount": str(v)} for k, v in sorted(credits.items())]}
+
+    m = base["max_issuance"]
+    cases = [
+        run("all_four_signed", [10] * 4, [2] * 4),
+        run("three_of_four_signed_one_absent", [10] * 4, [2, 2, 1, 2]),
+        run("nil_vote_gets_nothing", [10] * 4, [2, 3, 2, 2]),
+        run("height_1_empty_commit", [10] * 4, [None] * 4),
+        run("nobody_signed", [10] * 4, [1, 3, 1, 1]),
+        run("unequal_power_remainder", [3, 7, 1, 2], [2, 2, 1, 1], block_reward=1_000_003),
+        run("odd_split_bps", [5, 5, 5, 5], [2, 2, 2, 1], block_reward=999_999, reward_validators_bps=3333,
+            reward_pool_bps=3333, reward_treasury_bps=3334),
+        run("partial_last_reward", [10] * 4, [2] * 4, total_minted=m - 5),
+        run("one_yip_left", [10] * 4, [2] * 4, total_minted=m - 1),
+        run("cap_reached", [10] * 4, [2] * 4, total_minted=m),
+    ]
+    assert cases[-1]["minted"] == "0" and cases[-1]["credits"] == []
+    assert cases[-3]["minted"] == "5"
+    return {"cases": cases}
+
+
 # --------------------------------------------------------------------------- main
 def write(out_dir, name, obj):
     path = os.path.join(out_dir, name)
@@ -622,6 +666,7 @@ def main():
     write(args.out, "address.json", gen_addresses())
     write(args.out, "tx.json", gen_tx())
     write(args.out, "validation.json", gen_validation())
+    write(args.out, "economics.json", gen_economics())
     return 0
 
 
