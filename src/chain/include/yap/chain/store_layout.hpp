@@ -16,6 +16,22 @@ namespace yap::chain {
 
 inline constexpr std::uint32_t kSchemaVersion = 1;
 
+/// The store is damaged or inconsistent. Never repaired or recreated automatically.
+class StoreCorruption : public storage::StorageError {
+public:
+    using storage::StorageError::StorageError;
+};
+
+/// The store was written with a schema version this node does not support.
+class IncompatibleSchema : public storage::StorageError {
+public:
+    using storage::StorageError::StorageError;
+};
+
+/// Reads and decodes the metadata record: nullopt if absent; IncompatibleSchema for an unknown
+/// version; StoreCorruption if it cannot be decoded.
+[[nodiscard]] std::optional<struct StoreMeta> read_meta(const storage::KvStore& store);
+
 /// Key of the single metadata record in Table::Meta.
 [[nodiscard]] Bytes meta_key();
 

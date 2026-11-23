@@ -10,11 +10,46 @@ namespace yap::chain {
 
 using storage::Table;
 
+namespace {
+bool table_empty(const storage::KvStore& store, Table t) {
+    bool empty = true;
+    store.for_each(t, [&empty](const Bytes&, const Bytes&) { empty = false; });
+    return empty;
+}
+}  // namespace
+
 Engine::Engine(storage::KvStore& store) : store_(&store), state_view_(store, Table::State), nodes_(store) {
-    if (auto raw = store_->get(Table::Meta, meta_key())) {
-        auto meta = ycs::decode<StoreMeta>(*raw);
-        if (!meta) throw storage::StorageError("store metadata is unreadable or has an unsupported schema version");
-        meta_ = std::move(meta).value();
+    meta_ = read_meta(*store_);  // throws IncompatibleSchema / StoreCorruption
+    if (!meta_) {
+        // A store without metadata must be completely empty; anything else is a damaged store
+        // and is never reinitialised silently.
+        for (std::size_t t = 0; t < storage::kTableCount; ++t) {
+            if (!table_empty(*store_, static_cast<Table>(t))) {
+                throw StoreCorruption("store has data but no metadata (table " +
+                                      std::string(storage::table_name(static_cast<Table>(t))) + ")");
+            }
+        }
+        return;
+    }
+    // Cheap consistency checks on every start; the full check is verify_state().
+    state::Overlay view(&state_view_);
+    const auto cs = state::read_value<state::ChainState>(view, state::key::chain_state());
+    if (!cs) throw StoreCorruption("committed state has no ChainState");
+    if (cs->height != meta_->last_height) {
+        throw StoreCorruption("ChainState height " + std::to_string(cs->height) + " != metadata last_height " +
+                              std::to_string(meta_->last_height));
+    }
+    if (meta_->last_state_root != Hash32{}) {
+        const auto root = nodes_.node(meta_->last_state_root);
+        if (!root || merkle::node_hash(*root) != meta_->last_state_root) {
+            throw StoreCorruption("SMT root node does not match metadata last_state_root");
+        }
+    }
+    if (meta_->last_height > 0) {
+        const auto rec = block_record(meta_->last_height);
+        if (!rec || rec->state_root != meta_->last_state_root) {
+            throw StoreCorruption("block record of the last height is missing or disagrees with metadata");
+        }
     }
 }
 
@@ -65,11 +100,6 @@ state::RootFn Engine::incremental_root(merkle::SmtUpdater& smt) const {
 
 Hash32 Engine::init_chain(const Genesis& genesis) {
     if (meta_) throw std::logic_error("Engine: already initialised");
-    bool empty = true;
-    for (std::size_t t = 0; t < storage::kTableCount && empty; ++t) {
-        store_->for_each(static_cast<Table>(t), [&empty](const Bytes&, const Bytes&) { empty = false; });
-    }
-    if (!empty) throw storage::StorageError("refusing to initialise a non-empty store without metadata");
     if (auto err = validate_genesis(genesis); !err.empty()) throw std::invalid_argument("invalid genesis: " + err);
 
     state::Overlay o(&state_view_);
@@ -99,7 +129,7 @@ std::optional<BlockRecord> Engine::block_record(std::uint64_t height) const {
     auto raw = store_->get(Table::Results, results_key(height));
     if (!raw) return std::nullopt;
     auto rec = ycs::decode<BlockRecord>(*raw);
-    if (!rec) throw storage::StorageError("corrupted block record");
+    if (!rec) throw StoreCorruption("corrupted block record at height " + std::to_string(height));
     return std::move(rec).value();
 }
 

@@ -1,4 +1,4 @@
-add_library(yap_chain STATIC genesis.cpp engine.cpp store_layout.cpp)
+add_library(yap_chain STATIC genesis.cpp engine.cpp store_layout.cpp recovery.cpp)
 add_library(yap::chain ALIAS yap_chain)
 target_include_directories(yap_chain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(yap_chain PUBLIC yap::state yap::storage PRIVATE nlohmann_json::nlohmann_json)

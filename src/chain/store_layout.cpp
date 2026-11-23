@@ -10,6 +10,22 @@ Bytes meta_key() {
     return Bytes(k.begin(), k.end());
 }
 
+std::optional<StoreMeta> read_meta(const storage::KvStore& store) {
+    auto raw = store.get(storage::Table::Meta, meta_key());
+    if (!raw) return std::nullopt;
+    if (raw->size() < 4) throw StoreCorruption("metadata record is truncated");
+    const std::uint32_t version = static_cast<std::uint32_t>((*raw)[0]) | (static_cast<std::uint32_t>((*raw)[1]) << 8) |
+                                  (static_cast<std::uint32_t>((*raw)[2]) << 16) |
+                                  (static_cast<std::uint32_t>((*raw)[3]) << 24);
+    if (version != kSchemaVersion) {
+        throw IncompatibleSchema("store schema version " + std::to_string(version) + " is not supported (expected " +
+                                 std::to_string(kSchemaVersion) + ")");
+    }
+    auto meta = ycs::decode<StoreMeta>(*raw);
+    if (!meta) throw StoreCorruption("metadata record cannot be decoded");
+    return std::move(meta).value();
+}
+
 void StoreMeta::encode_to(ycs::Writer& w) const {
     w.u32(schema_version);
     w.string(chain_id);
