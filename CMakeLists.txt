@@ -46,6 +46,7 @@ include(Dependencies)
 add_subdirectory(src/common)
 add_subdirectory(src/codec)
 add_subdirectory(src/crypto)
+add_subdirectory(src/merkle)
 add_subdirectory(src/tx)
 add_subdirectory(src/state)
 

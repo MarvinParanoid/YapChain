@@ -1,5 +1,5 @@
-add_library(yap_state STATIC validation.cpp kv.cpp types.cpp state.cpp ledger.cpp economics.cpp)
+add_library(yap_state STATIC validation.cpp kv.cpp types.cpp state.cpp ledger.cpp economics.cpp state_root.cpp)
 add_library(yap::state ALIAS yap_state)
 target_include_directories(yap_state PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(yap_state PUBLIC yap::tx)
+target_link_libraries(yap_state PUBLIC yap::tx yap::merkle)
 yap_target_warnings(yap_state)

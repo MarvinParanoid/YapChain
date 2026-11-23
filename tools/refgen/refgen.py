@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bech32m_ref as b32  # noqa: E402
 import ed25519_ref as ed  # noqa: E402
 import economics_ref as econ  # noqa: E402
+import merkle_ref  # noqa: E402
 import tx_ref  # noqa: E402
 from ycs_ref import DecodeError  # noqa: E402
 import ycs_ref as ycs  # noqa: E402
@@ -643,6 +644,37 @@ def gen_economics():
     return {"cases": cases}
 
 
+# --------------------------------------------------------------------------- merkle
+def gen_merkle():
+    def k(i):
+        return int(i).to_bytes(32, "big")
+
+    def vh(i):
+        return hashlib.sha256(b"v" + str(i).encode()).digest()
+
+    leaf_sets = [
+        ("empty", []),
+        ("single", [(k(5), vh(1))]),
+        ("two_split_at_root", [(k(0), vh(1)), (bytes([0x80]) + b"\x00" * 31, vh(2))]),
+        ("two_differ_in_last_bit", [(k(0), vh(1)), (k(1), vh(2))]),
+        ("three_mixed", [(k(0), vh(1)), (k(1), vh(2)), (b"\xff" * 32, vh(3))]),
+        ("all_ones_and_zero", [(b"\x00" * 32, vh(4)), (b"\xff" * 32, vh(5))]),
+        ("sixteen_sequential", [(k(i), vh(i)) for i in range(16)]),
+        ("hashed_keys", [(hashlib.sha256(str(i).encode()).digest(), vh(i)) for i in range(40)]),
+    ]
+    smt = [{"name": n, "leaves": [{"key": hx(a), "value_hash": hx(b)} for a, b in leaves],
+            "root": hx(merkle_ref.smt_root(leaves))} for n, leaves in leaf_sets]
+    entries = {bytes([1]) + bytes([i]) * 32: bytes([i]) * (i % 5 + 1) for i in range(25)}
+    entries[b"\x00"] = b"chain-state"
+    entries[b"\x02"] = b"params"
+    state = {"entries": [{"raw_key": hx(a), "value": hx(b)} for a, b in sorted(entries.items())],
+             "root": hx(merkle_ref.state_root(entries))}
+    lists = [{"n": n, "root": hx(merkle_ref.rfc6962_root([bytes([i]) * (i + 1) for i in range(n)]))}
+             for n in (0, 1, 2, 3, 4, 5, 7, 8, 9, 16, 17)]
+    assert lists[0]["root"] == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    return {"smt": smt, "state": state, "rfc6962": lists}
+
+
 # --------------------------------------------------------------------------- main
 def write(out_dir, name, obj):
     path = os.path.join(out_dir, name)
@@ -667,6 +699,7 @@ def main():
     write(args.out, "tx.json", gen_tx())
     write(args.out, "validation.json", gen_validation())
     write(args.out, "economics.json", gen_economics())
+    write(args.out, "merkle.json", gen_merkle())
     return 0
 
 
