@@ -79,6 +79,18 @@ void contract(KvStore& s) {
     CHECK_THROWS_AS(s.write(cas_bad2), StorageConflict);
     CHECK_FALSE(s.get(Table::State, Bytes{0x07}).has_value());
     CHECK(dump(s, Table::Meta) == after_cas);
+
+    // A snapshot keeps seeing the moment it was taken and is read-only.
+    const auto snap = s.snapshot();
+    const auto frozen = dump(*snap, Table::State);
+    WriteBatch later;
+    later.put(Table::State, {0x55}, {5});
+    s.write(later);
+    CHECK(dump(*snap, Table::State) == frozen);
+    CHECK_FALSE(snap->get(Table::State, Bytes{0x55}).has_value());
+    CHECK(s.get(Table::State, Bytes{0x55}) == Bytes{5});
+    CHECK_THROWS_AS(snap->write(later), StorageError);
+    CHECK(dump(*snap->snapshot(), Table::State) == frozen);  // snapshot of a snapshot: same moment
 }
 
 }  // namespace

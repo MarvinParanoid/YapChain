@@ -113,7 +113,9 @@ LmdbStore::LmdbStore(const Options& options) : impl_(std::make_unique<Impl>()) {
     check(mdb_env_create(&impl_->env), "mdb_env_create");
     check(mdb_env_set_maxdbs(impl_->env, kTableCount), "mdb_env_set_maxdbs");
     check(mdb_env_set_mapsize(impl_->env, options.map_size), "mdb_env_set_mapsize");
-    const unsigned env_flags = options.read_only ? MDB_RDONLY : 0U;
+    // MDB_NOTLS: read transactions are not bound to a thread slot, so snapshots can coexist with
+    // other reads in the same thread. It does not affect durability.
+    const unsigned env_flags = (options.read_only ? MDB_RDONLY : 0U) | MDB_NOTLS;
     check(mdb_env_open(impl_->env, options.dir.c_str(), env_flags, 0600), "mdb_env_open");
 
     // Open (and, when allowed, create) one named database per table.
@@ -189,6 +191,46 @@ void LmdbStore::write(const WriteBatch& batch) {
     txn.commit();  // synced to disk before returning (no MDB_NOSYNC)
     fault_point("after_commit");
 }
+
+namespace {
+
+/// Read-only KvStore bound to one MDB_RDONLY transaction.
+class LmdbSnapshot final : public KvStore {
+public:
+    LmdbSnapshot(MDB_env* env, const std::array<MDB_dbi, kTableCount>& dbi) : txn_(env, MDB_RDONLY), dbi_(dbi) {}
+
+    [[nodiscard]] std::optional<Bytes> get(Table t, ByteView key) const override {
+        MDB_val k = as_val(key);
+        MDB_val v{};
+        const int rc = mdb_get(txn_.get(), dbi_[static_cast<std::size_t>(t)], &k, &v);
+        if (rc == MDB_NOTFOUND) return std::nullopt;
+        check(rc, "mdb_get");
+        return to_bytes(v);
+    }
+    void for_each(Table t, const std::function<void(const Bytes&, const Bytes&)>& fn) const override {
+        Cursor cur(txn_.get(), dbi_[static_cast<std::size_t>(t)]);
+        MDB_val k{};
+        MDB_val v{};
+        int rc = mdb_cursor_get(cur.get(), &k, &v, MDB_FIRST);
+        while (rc == MDB_SUCCESS) {
+            fn(to_bytes(k), to_bytes(v));
+            rc = mdb_cursor_get(cur.get(), &k, &v, MDB_NEXT);
+        }
+        if (rc != MDB_NOTFOUND) throw_lmdb(rc, "mdb_cursor_get");
+    }
+    void write(const WriteBatch&) override { throw StorageError("snapshot is read-only"); }
+    [[nodiscard]] std::unique_ptr<KvStore> snapshot() const override {
+        return std::make_unique<ReadOnlyView>(*this);  // same transaction, same point in time
+    }
+
+private:
+    Txn txn_;
+    std::array<MDB_dbi, kTableCount> dbi_;
+};
+
+}  // namespace
+
+std::unique_ptr<KvStore> LmdbStore::snapshot() const { return std::make_unique<LmdbSnapshot>(impl_->env, impl_->dbi); }
 
 std::size_t LmdbStore::map_size() const {
     MDB_envinfo info{};

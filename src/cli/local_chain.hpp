@@ -13,6 +13,7 @@ namespace yap::cli {
 
 struct LocalChain {
     std::unique_ptr<storage::LmdbStore> store;
+    std::unique_ptr<storage::KvStore> snapshot;  ///< read-only opens: every query reads one snapshot
     std::unique_ptr<chain::Engine> engine;
 
     [[nodiscard]] state::ChainState chain_state() const;

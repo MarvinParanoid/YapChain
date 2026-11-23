@@ -19,12 +19,15 @@ bool table_empty(const storage::KvStore& store, Table t) {
 }  // namespace
 
 Engine::Engine(storage::KvStore& store) : store_(&store), state_view_(store, Table::State), nodes_(store) {
-    meta_ = read_meta(*store_);  // throws IncompatibleSchema / StoreCorruption
+    // All start-up checks read one consistent snapshot: a concurrent writer can never make a
+    // healthy store look corrupt.
+    const auto snap = store_->snapshot();
+    meta_ = read_meta(*snap);  // throws IncompatibleSchema / StoreCorruption
     if (!meta_) {
         // A store without metadata must be completely empty; anything else is a damaged store
         // and is never reinitialised silently.
         for (std::size_t t = 0; t < storage::kTableCount; ++t) {
-            if (!table_empty(*store_, static_cast<Table>(t))) {
+            if (!table_empty(*snap, static_cast<Table>(t))) {
                 throw StoreCorruption("store has data but no metadata (table " +
                                       std::string(storage::table_name(static_cast<Table>(t))) + ")");
             }
@@ -32,21 +35,29 @@ Engine::Engine(storage::KvStore& store) : store_(&store), state_view_(store, Tab
         return;
     }
     // Cheap consistency checks on every start; the full check is verify_state().
-    state::Overlay view(&state_view_);
-    const auto cs = state::read_value<state::ChainState>(view, state::key::chain_state());
+    const TableReader snap_state(*snap, Table::State);
+    std::optional<state::ChainState> cs;
+    try {
+        cs = state::read_value<state::ChainState>(snap_state, state::key::chain_state());
+    } catch (const FailStop& e) {
+        throw StoreCorruption(std::string("ChainState: ") + e.what());
+    }
     if (!cs) throw StoreCorruption("committed state has no ChainState");
     if (cs->height != meta_->last_height) {
         throw StoreCorruption("ChainState height " + std::to_string(cs->height) + " != metadata last_height " +
                               std::to_string(meta_->last_height));
     }
     if (meta_->last_state_root != Hash32{}) {
-        const auto root = nodes_.node(meta_->last_state_root);
+        const StoreNodeReader snap_nodes(*snap);
+        const auto root = snap_nodes.node(meta_->last_state_root);
         if (!root || merkle::node_hash(*root) != meta_->last_state_root) {
             throw StoreCorruption("SMT root node does not match metadata last_state_root");
         }
     }
     if (meta_->last_height > 0) {
-        const auto rec = block_record(meta_->last_height);
+        const auto raw = snap->get(Table::Results, results_key(meta_->last_height));
+        const auto rec = raw ? ycs::decode<BlockRecord>(*raw) : Result<BlockRecord, ycs::DecodeError>(
+                                                                    unexpected(ycs::DecodeError::Truncated));
         if (!rec || rec->state_root != meta_->last_state_root) {
             throw StoreCorruption("block record of the last height is missing or disagrees with metadata");
         }

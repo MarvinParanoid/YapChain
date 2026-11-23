@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -90,6 +91,26 @@ public:
     virtual void for_each(Table t, const std::function<void(const Bytes&, const Bytes&)>& fn) const = 0;
     /// Applies the batch atomically (all or nothing) and durably before returning.
     virtual void write(const WriteBatch& batch) = 0;
+    /// A read-only view of one consistent point in time: every read through it sees the same
+    /// committed state, whatever writers do meanwhile. Writing to it throws StorageError.
+    /// The snapshot must not outlive the store it was taken from.
+    [[nodiscard]] virtual std::unique_ptr<KvStore> snapshot() const = 0;
+};
+
+/// Non-owning read-only view of another store (used as the "snapshot of a snapshot", which is
+/// the same point in time). Must not outlive the viewed store.
+class ReadOnlyView final : public KvStore {
+public:
+    explicit ReadOnlyView(const KvStore& base) : base_(&base) {}
+    [[nodiscard]] std::optional<Bytes> get(Table t, ByteView key) const override { return base_->get(t, key); }
+    void for_each(Table t, const std::function<void(const Bytes&, const Bytes&)>& fn) const override {
+        base_->for_each(t, fn);
+    }
+    void write(const WriteBatch&) override { throw StorageError("snapshot is read-only"); }
+    [[nodiscard]] std::unique_ptr<KvStore> snapshot() const override { return std::make_unique<ReadOnlyView>(*base_); }
+
+private:
+    const KvStore* base_;
 };
 
 /// In-memory implementation with the same semantics (minus durability).
@@ -98,9 +119,11 @@ public:
     [[nodiscard]] std::optional<Bytes> get(Table t, ByteView key) const override;
     void for_each(Table t, const std::function<void(const Bytes&, const Bytes&)>& fn) const override;
     void write(const WriteBatch& batch) override;
+    [[nodiscard]] std::unique_ptr<KvStore> snapshot() const override;
 
 private:
     std::map<Bytes, Bytes> tables_[kTableCount];
+    bool read_only_ = false;
 };
 
 // ------------------------------------------------------------------ fault injection (tests only)

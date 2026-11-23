@@ -59,7 +59,15 @@ void MemoryStore::for_each(Table t, const std::function<void(const Bytes&, const
     for (const auto& [k, v] : tables_[static_cast<std::size_t>(t)]) fn(k, v);
 }
 
+std::unique_ptr<KvStore> MemoryStore::snapshot() const {
+    if (read_only_) return std::make_unique<ReadOnlyView>(*this);  // already a frozen copy
+    auto copy = std::make_unique<MemoryStore>(*this);
+    copy->read_only_ = true;
+    return copy;
+}
+
 void MemoryStore::write(const WriteBatch& batch) {
+    if (read_only_) throw StorageError("snapshot is read-only");
     fault_point("before_txn");
     // Undo log: if anything throws mid-batch (allocation, a test hook), restore the previous
     // contents so the batch is all-or-nothing, like an aborted LMDB transaction.

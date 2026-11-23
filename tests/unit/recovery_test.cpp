@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
+#include <thread>
+
 #include "temp_dir.hpp"
 #include "testnet.hpp"
 #include "yap/storage/lmdb_store.hpp"
@@ -212,4 +215,35 @@ TEST_CASE("replay from an external journal file matches continuous execution", "
     e.init_chain(f.net.genesis);
     CHECK(chain::replay(e, journal) == journal.size());
     CHECK(e.info().last_state_root == f.roots.back());
+}
+
+TEST_CASE("verification during concurrent commits never reports false corruption", "[recovery][lmdb][audit]") {
+    // Audit M1.5: multi-read checks used to read several committed versions; a writer committing
+    // meanwhile made a healthy store look corrupt (263 of 2363 runs in the reviewer's experiment).
+    const auto net = TestNet::make(20);
+    auto blocks = net.journal(300, 6, 31);
+    TempDir dir;
+    storage::LmdbStore store({dir.path()});
+    chain::Engine writer(store);
+    writer.init_chain(net.genesis);
+    std::atomic<bool> done{false};
+    std::atomic<int> false_alarms{0};
+    std::atomic<int> checks{0};
+    std::thread reader([&] {
+        while (!done.load()) {
+            try {
+                (void)chain::verify_state(store);
+                chain::Engine probe(store);  // start-up checks of a second instance
+            } catch (const std::exception&) {
+                false_alarms.fetch_add(1);
+            }
+            checks.fetch_add(1);
+        }
+    });
+    chain::replay(writer, blocks);
+    done = true;
+    reader.join();
+    CHECK(false_alarms.load() == 0);
+    CHECK(checks.load() > 10);
+    CHECK_NOTHROW((void)chain::verify_state(store));
 }

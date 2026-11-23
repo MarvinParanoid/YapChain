@@ -31,7 +31,12 @@ std::optional<LocalChain> open_local_chain(const Context& ctx, bool read_only, b
     o.create = false;
     LocalChain lc;
     lc.store = std::make_unique<storage::LmdbStore>(o);
-    lc.engine = std::make_unique<chain::Engine>(*lc.store);
+    if (read_only) {
+        lc.snapshot = lc.store->snapshot();
+        lc.engine = std::make_unique<chain::Engine>(*lc.snapshot);
+    } else {
+        lc.engine = std::make_unique<chain::Engine>(*lc.store);
+    }
     if (!lc.engine->initialized()) {
         if (required) throw CliError(kExitRejected, "local chain at " + dir.string() + " is not initialised");
         return std::nullopt;

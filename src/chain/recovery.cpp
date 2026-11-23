@@ -11,7 +11,11 @@ namespace yap::chain {
 
 using storage::Table;
 
-VerifyReport verify_state(const storage::KvStore& store) {
+VerifyReport verify_state(const storage::KvStore& live) {
+    // Every check below reads the same consistent snapshot (concurrent writers cannot cause
+    // false corruption reports).
+    const auto snapshot = live.snapshot();
+    const storage::KvStore& store = *snapshot;
     const auto meta = read_meta(store);  // IncompatibleSchema / StoreCorruption
     if (!meta) throw StoreCorruption("verify_state: store has no metadata");
     VerifyReport rep;

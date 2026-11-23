@@ -38,6 +38,9 @@ public:
     /// One LMDB write transaction per batch. Throws StorageFull on MDB_MAP_FULL and StorageError
     /// otherwise; in both cases the transaction is aborted and nothing is applied.
     void write(const WriteBatch& batch) override;
+    /// Holds one MDB_RDONLY transaction for its lifetime (the environment uses MDB_NOTLS, so a thread
+    /// may keep a snapshot open while doing other reads). Long-lived snapshots pin old pages.
+    [[nodiscard]] std::unique_ptr<KvStore> snapshot() const override;
 
     [[nodiscard]] std::size_t map_size() const;
 
