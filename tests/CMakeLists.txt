@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 add_library(yap_test_support INTERFACE)
 target_include_directories(yap_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/support)
-target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx yap::state yap::chain yap::storage)
+target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx yap::state yap::chain yap::storage yap::wallet)
 
 if(YAP_BUILD_TESTS)
   include(Catch)
@@ -22,8 +22,9 @@ if(YAP_BUILD_TESTS)
     unit/engine_test.cpp
     unit/storage_test.cpp
     unit/persistent_smt_test.cpp
-    unit/recovery_test.cpp)
-  target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
+    unit/recovery_test.cpp
+    unit/wallet_test.cpp)
+  target_link_libraries(yap_unit_tests PRIVATE yap_test_support nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
 
@@ -46,6 +47,10 @@ if(YAP_BUILD_TESTS)
   target_link_libraries(yap_fuzz_smoke PRIVATE yap_test_support)
   yap_target_warnings(yap_fuzz_smoke)
   add_test(NAME fuzz_smoke COMMAND yap_fuzz_smoke 200000)
+
+  # CLI tests drive the real `yap` binary as a subprocess.
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME cli:keys COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_keys_cli.py $<TARGET_FILE:yap>)
 
   # Crash-recovery tests fork child processes that are killed with SIGKILL.
   add_executable(yap_crash_tests crash/crash_recovery_test.cpp)

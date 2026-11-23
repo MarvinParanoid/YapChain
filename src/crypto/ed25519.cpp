@@ -26,11 +26,13 @@ unsigned char* allocate_secret() {
 }
 }  // namespace
 
-SecretKey SecretKey::from_seed(const Seed& seed) {
+SecretKey SecretKey::from_seed(const Seed& seed) { return from_seed_bytes(seed.data()); }
+
+SecretKey SecretKey::from_seed_bytes(const unsigned char* seed32) {
     ensure_initialized();
     SecretKey key;
     key.secret_ = allocate_secret();
-    if (crypto_sign_seed_keypair(key.public_key_.data(), key.secret_, seed.data()) != 0) {
+    if (crypto_sign_seed_keypair(key.public_key_.data(), key.secret_, seed32) != 0) {
         throw std::runtime_error("crypto_sign_seed_keypair failed");
     }
     return key;

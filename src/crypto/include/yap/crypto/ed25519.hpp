@@ -25,6 +25,8 @@ class SecretKey {
 public:
     /// Deterministic key from a 32-byte seed.
     [[nodiscard]] static SecretKey from_seed(const Seed& seed);
+    /// Same, reading the seed from caller-managed (e.g. guarded) memory without copying it.
+    [[nodiscard]] static SecretKey from_seed_bytes(const unsigned char* seed32);
     /// Fresh key from the OS CSPRNG.
     [[nodiscard]] static SecretKey generate();
 

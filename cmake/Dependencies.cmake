@@ -93,6 +93,21 @@ set(JSON_Install OFF CACHE BOOL "" FORCE)
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
 
+# ------------------------------------------------------------------ CLI11 2.7.2 (single header, CLI only)
+set(YAP_CLI11_VERSION 2.7.2)
+set(YAP_CLI11_SHA256 ffa9a30da295c5858fb5f91f9f45771bab09471d7010a34c7c68c857a330dd76)
+yap_dep_url(_yap_cli11_url "CLI11-${YAP_CLI11_VERSION}.hpp"
+  "https://github.com/CLIUtils/CLI11/releases/download/v${YAP_CLI11_VERSION}/CLI11.hpp")
+FetchContent_Declare(cli11
+  URL "${_yap_cli11_url}"
+  URL_HASH SHA256=${YAP_CLI11_SHA256}
+  DOWNLOAD_NO_EXTRACT TRUE
+  DOWNLOAD_NAME CLI11.hpp)
+FetchContent_MakeAvailable(cli11)
+add_library(yap_cli11 INTERFACE)
+target_include_directories(yap_cli11 SYSTEM INTERFACE "${cli11_SOURCE_DIR}")
+add_library(yap::cli11 ALIAS yap_cli11)
+
 # ------------------------------------------------------------------ test-only dependencies
 if(YAP_BUILD_TESTS OR YAP_FUZZ)
   set(YAP_CATCH2_VERSION 3.16.1)

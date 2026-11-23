@@ -1,0 +1,5 @@
+add_library(yap_wallet STATIC amount.cpp keystore.cpp)
+add_library(yap::wallet ALIAS yap_wallet)
+target_include_directories(yap_wallet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(yap_wallet PUBLIC yap::crypto PRIVATE yap::sodium nlohmann_json::nlohmann_json)
+yap_target_warnings(yap_wallet)

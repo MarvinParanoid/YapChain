@@ -51,6 +51,8 @@ add_subdirectory(src/merkle)
 add_subdirectory(src/tx)
 add_subdirectory(src/state)
 add_subdirectory(src/chain)
+add_subdirectory(src/wallet)
+add_subdirectory(src/cli)
 
 if(YAP_BUILD_TESTS OR YAP_FUZZ)
   enable_testing()
