@@ -54,6 +54,21 @@ TEST_CASE("generated keys are distinct and usable", "[crypto][ed25519]") {
     CHECK(verify(a.public_key(), as_bytes("x"), a.sign(as_bytes("x"))));
 }
 
+TEST_CASE("validator public key validation", "[crypto][ed25519][validator]") {
+    for (Byte b = 0; b < 16; ++b) {
+        CHECK(is_valid_validator_public_key(SecretKey::from_seed(seed_of(b)).public_key()));
+        CHECK(is_valid_validator_public_key(SecretKey::generate().public_key()));
+    }
+    PublicKey identity{};
+    identity[0] = 1;
+    CHECK_FALSE(is_valid_validator_public_key(identity));
+    PublicKey zero{};
+    CHECK_FALSE(is_valid_validator_public_key(zero));
+    PublicKey all_ff{};
+    all_ff.fill(0xff);  // y >= p
+    CHECK_FALSE(is_valid_validator_public_key(all_ff));
+}
+
 TEST_CASE("SecretKey move semantics", "[crypto][ed25519]") {
     auto a = SecretKey::from_seed(seed_of(4));
     const auto pk = a.public_key();

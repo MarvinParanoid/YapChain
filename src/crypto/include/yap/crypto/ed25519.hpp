@@ -52,4 +52,10 @@ private:
 [[nodiscard]] bool verify_prefixed(const PublicKey& public_key, std::string_view prefix, ByteView payload,
                                    const Signature& signature);
 
+/// Validator consensus public key check (docs/protocol.md §5.7, ADR-0020): canonical encoding,
+/// not of small order, on the curve and in the prime-order subgroup — the semantics of
+/// libsodium crypto_core_ed25519_is_valid_point(). Stricter than what verify() accepts for
+/// user keys (mixed-order keys are rejected here); do not use it to validate user accounts.
+[[nodiscard]] bool is_valid_validator_public_key(const PublicKey& public_key);
+
 }  // namespace yap::crypto

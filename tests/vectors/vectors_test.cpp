@@ -259,6 +259,32 @@ TEST_CASE("Ed25519 verification edge cases match protocol §5.2", "[vectors][ed2
     CHECK(rejected >= 15);
 }
 
+TEST_CASE("validator public key vectors match protocol §5.7", "[vectors][ed25519][validator]") {
+    const auto vec = load("ed25519.json");
+    std::size_t valid = 0;
+    std::size_t invalid = 0;
+    for (const auto& v : vec.at("validator_keys")) {
+        INFO(v.at("name").get<std::string>() << ": " << v.at("note").get<std::string>());
+        const bool expected = v.at("valid").get<bool>();
+        CHECK(crypto::is_valid_validator_public_key(hexn<32>(v.at("pub"))) == expected);
+        (expected ? valid : invalid) += 1;
+    }
+    CHECK(valid >= 5);
+    CHECK(invalid >= 14);
+
+    // ADR-0020 tightens only validator keys: a mixed-order key still verifies user signatures.
+    bool checked_mixed = false;
+    for (const auto& v : vec.at("verify")) {
+        if (v.at("name") == "mixed_order_a_k_div_8") {
+            const auto pub = hexn<32>(v.at("pub"));
+            CHECK(crypto::verify(pub, hex(v.at("msg")), hexn<64>(v.at("sig"))));
+            CHECK_FALSE(crypto::is_valid_validator_public_key(pub));
+            checked_mixed = true;
+        }
+    }
+    CHECK(checked_mixed);
+}
+
 // ---------------------------------------------------------------- Bech32m and addresses
 
 TEST_CASE("Bech32m BIP-350 vectors", "[vectors][bech32m]") {

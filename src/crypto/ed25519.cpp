@@ -85,4 +85,9 @@ bool verify_prefixed(const PublicKey& public_key, std::string_view prefix, ByteV
     return verify(public_key, concat(as_bytes(prefix), payload), signature);
 }
 
+bool is_valid_validator_public_key(const PublicKey& public_key) {
+    ensure_initialized();
+    return crypto_core_ed25519_is_valid_point(public_key.data()) == 1;
+}
+
 }  // namespace yap::crypto

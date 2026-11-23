@@ -13,6 +13,8 @@
   семантика `last_commit` ([ADR-0015](adr/0015-validator-rewards-last-commit.md)), genesis через `app_state`
   ([ADR-0016](adr/0016-genesis-single-source.md)), нормативный порядок проверок
   ([ADR-0019](adr/0019-normative-check-order.md)), уточнения `ProcessProposal`/`FinalizeBlock`.
+- r3 — строгая проверка публичных ключей валидаторов (§5.7, §11.2 п. 4,
+  [ADR-0020](adr/0020-validator-public-key-validation.md)). Правила проверки подписей (§5.2) не изменены.
 
 ## 1. Обозначения и арифметика
 
@@ -224,13 +226,32 @@ account_id = H_tag("YAP/sys-account/v1", name)
 ### 5.5 Ключи валидаторов
 Консенсусный ключ валидатора (Ed25519, управляется CometBFT) отделён от аккаунта для наград.
 Связь `consensus_address → reward_account` задаётся в genesis (§11). Консенсусный адрес — формат CometBFT:
-первые 20 байт `SHA-256(pubkey)` (обычный SHA-256, не tagged).
+первые 20 байт `SHA-256(pubkey)` (обычный SHA-256, не tagged). Публичный ключ валидатора ДОЛЖЕН проходить
+проверку §5.7.
 
 ### 5.6 Хранение ключей пользователей
 - Keystore-файл: JSON `{version: 1, kdf: "argon2id", opslimit, memlimit, salt, nonce, ciphertext, address}`,
   шифрование seed — XChaCha20-Poly1305, ключ шифрования — Argon2id (`crypto_pwhash`, уровень MODERATE).
 - Seed в памяти — в `sodium_malloc`, обнуляется `sodium_memzero`.
 - Мнемоники (BIP-39) и HD-деривация — **OPEN**, не входят в M1; одна пара ключей = один адрес.
+
+### 5.7 Проверка публичного ключа валидатора (нормативно, ADR-0020)
+
+Применяется к консенсусным ключам валидаторов (genesis, а в будущем — операции изменения набора валидаторов).
+**Не применяется** к ключам аккаунтов и эмитентов: для них действует только §5.2.
+
+`is_valid_validator_key(A_bytes)` (обозначения §5.2):
+1. Если `y_raw(A_bytes) ≥ p` → **invalid** (неканоническая кодировка).
+2. Если `y_raw(A_bytes) ∈ SMALL_Y` → **invalid** (точка малого порядка; сюда же попадают кодировки с `x = 0`
+   и установленным битом знака).
+3. Декодировать `A` по RFC 8032 §5.1.3; если `x` не существует → **invalid**.
+4. Если `[L]A ≠ O` (нейтральный элемент) → **invalid**: точка вне подгруппы простого порядка, т.е. имеет
+   ненулевую кручёную компоненту.
+5. Иначе — **valid**.
+
+Это семантика `crypto_core_ed25519_is_valid_point()` libsodium; совпадение подтверждается векторами
+`test-vectors/ed25519.json` (`validator_keys`), сгенерированными независимой реализацией (`tools/refgen`).
+Разница с §5.2: ключ смешанного порядка допускается при проверке пользовательских подписей, но не как ключ валидатора.
 
 ## 6. Транзакции
 
@@ -562,7 +583,7 @@ Genesis YapChain хранится в поле `app_state` файла `genesis.js
 3. `accounts`: строго возрастающие `account_id` (значит, без дублей); `balance ≥ 1`;
    `Σ balance` вычисляется checked и `≤ params.max_issuance`.
 4. `validators`: 1..32 записей; строго возрастающие `consensus_address`; `consensus_pubkey` уникальны и проходят
-   шаги 3–5 §5.2; `power ≥ 1`; `Σ power ≤ 2^60` (лимит CometBFT `MaxTotalVotingPower = 2^63/8`); имена по §3.3.
+   проверку §5.7; `power ≥ 1`; `Σ power ≤ 2^60` (лимит CometBFT `MaxTotalVotingPower = 2^63/8`); имена по §3.3.
 5. `issuers`, `achievements`: правила attestations.md §3.2; каждый `achievement.issuer_id` существует.
 6. JSON-представление разбирается строго (§11.3).
 

@@ -24,3 +24,4 @@
 | [0017](0017-checked-arithmetic-and-atomicity.md) | Checked-арифметика, классы ошибок, атомарность tx | DECIDED |
 | [0018](0018-dependency-pinning.md) | Фиксация зависимостей через CMake (URL + SHA-256) | DECIDED |
 | [0019](0019-normative-check-order.md) | Нормативный порядок проверок транзакций | DECIDED |
+| [0020](0020-validator-public-key-validation.md) | Строгая проверка публичных ключей валидаторов | DECIDED |

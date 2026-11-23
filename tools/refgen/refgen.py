@@ -267,7 +267,54 @@ def gen_ed25519():
     }
     for c in cases:
         assert c["valid"] == expected[c["name"]], c["name"]
-    return {"rfc8032": RFC8032, "deterministic": det, "verify": cases}
+    return {"rfc8032": RFC8032, "deterministic": det, "verify": cases,
+            "validator_keys": gen_validator_keys(pub, mixed, t8)}
+
+
+def gen_validator_keys(pub, mixed, t8):
+    """docs/protocol.md section 5.7 (ADR-0020): validator consensus public keys."""
+    keys = []
+
+    def add(name, enc, note):
+        keys.append({"name": name, "pub": hx(enc), "valid": ed.is_valid_validator_key(enc), "note": note})
+
+    for i in range(3):
+        add(f"generated_{i}", ed.public_key(seed(200 + i)), "public key derived from a seed")
+    add("base_point", ed.compress(ed.BASE), "generator B")
+    add("verify_baseline_key", pub, "key of ed25519 verify vector valid_baseline")
+    add("identity", int.to_bytes(1, 32, "little"), "neutral element, order 1")
+    add("identity_sign_bit", int.to_bytes(1 | (1 << 255), 32, "little"), "y = 1 with sign bit (x = -0)")
+    add("order_2", int.to_bytes(ed.P - 1, 32, "little"), "(0, -1)")
+    add("order_4", int.to_bytes(0, 32, "little"), "y = 0")
+    add("order_4_sign_bit", int.to_bytes(1 << 255, 32, "little"), "y = 0, other x")
+    t8_enc = ed.compress(t8)
+    add("order_8", t8_enc, "torsion point of order 8")
+    add("order_8_negated", ed.compress(ed.point_neg(t8)), "negated torsion point of order 8")
+    add("y_eq_p", int.to_bytes(ed.P, 32, "little"), "non-canonical encoding of y = 0")
+    add("y_eq_p_plus_1", int.to_bytes(ed.P + 1, 32, "little"), "non-canonical encoding of y = 1")
+    for y in range(2, 19):
+        if ed.recover_x(y, 0) is not None:
+            add("noncanonical_valid_point", int.to_bytes(ed.P + y, 32, "little"),
+                f"y = p + {y}: non-canonical encoding of a curve point")
+            break
+    for y in range(2, 1000):
+        if ed.recover_x(y, 0) is None:
+            add("not_on_curve", int.to_bytes(y, 32, "little"), f"y = {y}: no x exists")
+            break
+    add("mixed_order_t8", mixed, "A + T8: accepted by signature verification (section 5.2), "
+        "rejected here because it is outside the prime-order subgroup")
+    a_pt = ed.decompress_canonical(pub)
+    t4 = ed.scalar_mul(2, t8)
+    t2 = ed.scalar_mul(4, t8)
+    add("mixed_order_t4", ed.compress(ed.point_add(a_pt, t4)), "A + T4")
+    add("mixed_order_t2", ed.compress(ed.point_add(a_pt, t2)), "A + T2")
+
+    expected_valid = {"generated_0", "generated_1", "generated_2", "base_point", "verify_baseline_key"}
+    for k in keys:
+        assert k["valid"] == (k["name"] in expected_valid), k["name"]
+    # The tightening is real: the mixed-order key is a valid signature-verification key.
+    assert ed.y_raw(mixed) not in ed.SMALL_Y and ed.decompress_canonical(mixed) is not None
+    return keys
 
 
 # --------------------------------------------------------------------------- bech32m

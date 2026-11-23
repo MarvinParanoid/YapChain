@@ -180,3 +180,18 @@ def torsion_point_of_order_8():
         if not point_equal(scalar_mul(4, t), IDENTITY):
             return t
     raise RuntimeError("no order-8 point found")
+
+
+def is_valid_validator_key(s):
+    """docs/protocol.md section 5.7: semantics of libsodium crypto_core_ed25519_is_valid_point()."""
+    if len(s) != 32:
+        return False
+    y = y_raw(s)
+    if y >= P:                                  # step 1: canonical y
+        return False
+    if y in SMALL_Y:                            # step 2: not of small order
+        return False
+    pt = decompress_canonical(s)                # step 3: on the curve
+    if pt is None:
+        return False
+    return point_equal(scalar_mul(L, pt), IDENTITY)  # step 4: prime-order subgroup

@@ -79,7 +79,8 @@ flowchart LR
 - `yap_merkle`: SMT (§8.1) в памяти, RFC 6962 root (§8.2).
 - `yap_state`: типы state §7, `MemoryKvStore`, overlay блока и overlay транзакции (§7.5), stateful T1–T6
   (T7 → `ERR_UNSUPPORTED`), эффекты, комиссии, эмиссия §9.5, инварианты §7.3.
-- `yap_chain`: `Genesis` (строгий JSON → YCS, правила §11.2, `genesis_hash`, начальный state), `BlockContext`,
+- `yap_chain`: `Genesis` (строгий JSON → YCS, правила §11.2 — ключи валидаторов через уже реализованную
+  `is_valid_validator_public_key()`, §5.7; `genesis_hash`, начальный state), `BlockContext`,
   `Application::init_chain/check_tx/prepare_proposal/process_proposal/finalize_block` над памятью.
 - Независимая эталонная реализация исполнения в `tools/refgen` (Python) для генерации `blocks.json`.
 

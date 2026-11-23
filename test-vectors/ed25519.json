@@ -138,6 +138,122 @@
     "sig": "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a"
    }
   ],
+  "validator_keys": [
+   {
+    "name": "generated_0",
+    "note": "public key derived from a seed",
+    "pub": "27b1c6d9925371c4ccaf5095c812477da51dda09fe598f5cf741eabfe3d71e00",
+    "valid": true
+   },
+   {
+    "name": "generated_1",
+    "note": "public key derived from a seed",
+    "pub": "405ebf09c3d77d3310e75da9287868cbde94efd334d970f07ba95bef3638873a",
+    "valid": true
+   },
+   {
+    "name": "generated_2",
+    "note": "public key derived from a seed",
+    "pub": "e604dc7fa818bda4c8869afab552cfe0fa00a1e2549793a281a9152ed861e503",
+    "valid": true
+   },
+   {
+    "name": "base_point",
+    "note": "generator B",
+    "pub": "5866666666666666666666666666666666666666666666666666666666666666",
+    "valid": true
+   },
+   {
+    "name": "verify_baseline_key",
+    "note": "key of ed25519 verify vector valid_baseline",
+    "pub": "614b3229dacc2b640778d93b2d56fee3388d2ebf209765863109202002313849",
+    "valid": true
+   },
+   {
+    "name": "identity",
+    "note": "neutral element, order 1",
+    "pub": "0100000000000000000000000000000000000000000000000000000000000000",
+    "valid": false
+   },
+   {
+    "name": "identity_sign_bit",
+    "note": "y = 1 with sign bit (x = -0)",
+    "pub": "0100000000000000000000000000000000000000000000000000000000000080",
+    "valid": false
+   },
+   {
+    "name": "order_2",
+    "note": "(0, -1)",
+    "pub": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "valid": false
+   },
+   {
+    "name": "order_4",
+    "note": "y = 0",
+    "pub": "0000000000000000000000000000000000000000000000000000000000000000",
+    "valid": false
+   },
+   {
+    "name": "order_4_sign_bit",
+    "note": "y = 0, other x",
+    "pub": "0000000000000000000000000000000000000000000000000000000000000080",
+    "valid": false
+   },
+   {
+    "name": "order_8",
+    "note": "torsion point of order 8",
+    "pub": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "valid": false
+   },
+   {
+    "name": "order_8_negated",
+    "note": "negated torsion point of order 8",
+    "pub": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "valid": false
+   },
+   {
+    "name": "y_eq_p",
+    "note": "non-canonical encoding of y = 0",
+    "pub": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "valid": false
+   },
+   {
+    "name": "y_eq_p_plus_1",
+    "note": "non-canonical encoding of y = 1",
+    "pub": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "valid": false
+   },
+   {
+    "name": "noncanonical_valid_point",
+    "note": "y = p + 3: non-canonical encoding of a curve point",
+    "pub": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "valid": false
+   },
+   {
+    "name": "not_on_curve",
+    "note": "y = 2: no x exists",
+    "pub": "0200000000000000000000000000000000000000000000000000000000000000",
+    "valid": false
+   },
+   {
+    "name": "mixed_order_t8",
+    "note": "A + T8: accepted by signature verification (section 5.2), rejected here because it is outside the prime-order subgroup",
+    "pub": "56d3b457adfe08ec52188717076934b28aacf1a27c9d348861d9e632183eef37",
+    "valid": false
+   },
+   {
+    "name": "mixed_order_t4",
+    "note": "A + T4",
+    "pub": "08457c7a4c67c4fff95232dbf81ca1d8477406462f6c3f6532e94db1902096d0",
+    "valid": false
+   },
+   {
+    "name": "mixed_order_t2",
+    "note": "A + T2",
+    "pub": "8cb4cdd62533d49bf88726c4d2a9011cc772d140df689a79cef6dfdffdcec7b6",
+    "valid": false
+   }
+  ],
   "verify": [
    {
     "msg": "596170436861696e20656467652d63617365206d657373616765",
