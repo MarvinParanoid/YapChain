@@ -8,6 +8,7 @@ modules in this directory. It shares no code with the C++ implementation.
 Usage: python3 -I tools/refgen/refgen.py --out test-vectors
 """
 import argparse
+import random
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bech32m_ref as b32  # noqa: E402
 import ed25519_ref as ed  # noqa: E402
 import economics_ref as econ  # noqa: E402
+import exec_ref  # noqa: E402
 import merkle_ref  # noqa: E402
 import state_ref  # noqa: E402
 import tx_ref  # noqa: E402
@@ -680,7 +682,7 @@ def gen_merkle():
 YAP = 1_000_000
 
 
-def reference_genesis(params=None, extra_accounts=(), n_validators=4):
+def reference_genesis(params=None, extra_accounts=(), n_validators=4, fresh_reward_accounts=False):
     """Testnet-like genesis following economics.md §3 (amounts in yip)."""
     treasury = tagged_hash("YAP/sys-account/v1", b"treasury")
     pool = tagged_hash("YAP/sys-account/v1", b"rewards-pool")
@@ -690,8 +692,9 @@ def reference_genesis(params=None, extra_accounts=(), n_validators=4):
     for i in range(n_validators):
         operator = account_id(ed.public_key(seed(510 + i)))
         accounts[operator] = 2_500_000 * YAP
+        reward = account_id(ed.public_key(seed(540 + i))) if fresh_reward_accounts else operator
         validators.append({"consensus_pubkey": ed.public_key(seed(520 + i)), "power": 10,
-                           "reward_account": operator, "name": f"validator-{i + 1}"})
+                           "reward_account": reward, "name": f"validator-{i + 1}"})
     for aid, bal in extra_accounts:
         accounts[aid] = accounts.get(aid, 0) + bal
     validators.sort(key=lambda v: state_ref.consensus_address(v["consensus_pubkey"]))
@@ -815,6 +818,141 @@ def bech32m_ref_encode(hrp, aid):
     return b32.encode_address(hrp, aid)
 
 
+# --------------------------------------------------------------------------- block execution
+USERS = [seed(600 + i) for i in range(8)]
+
+
+def uid(i):
+    return account_id(ed.public_key(USERS[i]))
+
+
+class Scenario:
+    def __init__(self, name, genesis):
+        self.name, self.g = name, genesis
+        self.chain = exec_ref.Chain(genesis)
+        self.genesis_root = self.chain.root()
+        self.blocks = []
+        self.addrs = sorted(self.chain.validators)
+
+    def commit_votes(self, flags):
+        return [(a, self.chain.validators[a]["power"], f) for a, f in zip(self.addrs, flags) if f is not None]
+
+    def block(self, txs, flags=None):
+        h = self.chain.cs["height"] + 1
+        votes = [] if h == 1 else self.commit_votes(flags or [2] * len(self.addrs))
+        t = self.g["genesis_time_ms"] + h * 2000
+        codes, root = self.chain.execute_block(h, t, votes, txs)
+        self.blocks.append({"height": str(h), "time_ms": str(t),
+                            "last_commit": [{"address": hx(a), "power": str(p), "flag": f} for a, p, f in votes],
+                            "txs": [hx(x) for x in txs], "codes": codes, "accept": all(c == "OK" for c in codes),
+                            "state_root": hx(root), "chain_state": {k: str(v) for k, v in self.chain.cs.items()}})
+        return codes
+
+    def to_json(self):
+        return {"name": self.name, "genesis": genesis_text(self.g), "genesis_root": hx(self.genesis_root),
+                "blocks": self.blocks}
+
+
+def tx(i, payload, nonce, fee=1000, expires=1_000, memo=b"", signer=None):
+    body = make_body(USERS[i], payload, nonce=nonce, fee=fee, expires=expires, memo=memo)
+    return tx_ref.sign_tx(body, USERS[signer if signer is not None else i]) if signer is None else \
+        tx_ref.encode_body(body) + tx_ref.sign_tx(dict(body, sender_pubkey=ed.public_key(USERS[signer])),
+                                                  USERS[signer])[-64:]
+
+
+def transfer(i, to, amount, nonce, **kw):
+    return tx(i, {"type": "transfer", "to": to, "amount": amount}, nonce, **kw)
+
+
+def burn(i, amount, nonce, **kw):
+    return tx(i, {"type": "burn", "amount": amount}, nonce, **kw)
+
+
+def scenario_basics():
+    g = reference_genesis(extra_accounts=[(uid(0), 10 * YAP), (uid(1), 3_000)])
+    sc = Scenario("ledger_basics", g)
+    t1 = transfer(0, uid(1), YAP, 0)
+    att = {"version": 1, "chain_id": CHAIN_ID, "issuer_id": 1, "key_id": 0, "achievement_id": 1,
+           "subject": uid(0), "claim_id": b"\x05" * 16, "evidence_hash": b"\x00" * 32,
+           "issued_at_s": 1_767_225_600, "expires_at_s": 1_767_225_600 + 3600}
+    claim = {"type": "claim", "attestation": att, "issuer_signature": tx_ref.sign_attestation(att, seed(530))}
+    expect = [
+        sc.block([t1, transfer(0, uid(2), 2 * YAP, 1), burn(1, 500, 0), transfer(0, uid(1), 1, 5),
+                  transfer(0, uid(1), 1, 2, signer=3), transfer(0, uid(1), 1, 2, expires=0), t1]),
+        sc.block([transfer(2, uid(4), 2 * YAP - 1000, 0), transfer(2, uid(4), 1, 1),
+                  transfer(1, tagged_hash("YAP/sys-account/v1", b"treasury"), 100, 1)]),
+        sc.block([b"\x00" * 4097, tx(0, claim, 2), transfer(0, uid(1), tx_ref.U64_MAX, 2),
+                  transfer(0, uid(1), 1, 2, memo=b"m" * 129)], flags=[2, 2, 3, 2]),
+        sc.block([], flags=[2, 1, 2, 1]),
+        sc.block([transfer(1, uid(2), 5_000, 2), transfer(2, uid(0), 1, 1)]),
+    ]
+    assert expect[0] == ["OK", "OK", "OK", "ERR_NONCE", "ERR_SIGNATURE", "ERR_EXPIRED", "ERR_NONCE"], expect[0]
+    assert expect[1] == ["OK", "ERR_INSUFFICIENT_FUNDS", "OK"], expect[1]
+    assert expect[2] == ["ERR_TOO_LARGE", "ERR_UNSUPPORTED", "ERR_OVERFLOW", "ERR_MEMO"], expect[2]
+    assert expect[3] == [] and expect[4] == ["OK", "OK"], expect[4]
+    return sc
+
+
+def scenario_emission_cap():
+    supply_g = reference_genesis(extra_accounts=[(uid(0), 10 * YAP)])
+    supply = sum(a["balance"] for a in supply_g["accounts"])
+    params = dict(tx_ref.TESTNET_PARAMS, max_issuance=supply + 3_000_005)
+    sc = Scenario("emission_cap", reference_genesis(params, extra_accounts=[(uid(0), 10 * YAP)]))
+    sc.block([transfer(0, uid(1), 10, 0)])
+    sc.block([transfer(0, uid(1), 10, 1)])
+    sc.block([burn(0, 5 * YAP, 2)])                       # burns do not re-enable emission
+    sc.block([transfer(0, uid(1), 10, 3)], flags=[2, 2, 2, 3])
+    minted = [int(b["chain_state"]["total_minted"]) for b in sc.blocks]
+    assert [y - x for x, y in zip([supply] + minted, minted)] == [2_000_000, 1_000_005, 0, 0]
+    return sc
+
+
+def scenario_zero_shares():
+    params = dict(tx_ref.TESTNET_PARAMS, block_reward=3, fee_burn_bps=10000)
+    sc = Scenario("zero_shares", reference_genesis(params, extra_accounts=[(uid(0), YAP)],
+                                                   fresh_reward_accounts=True))
+    sc.block([transfer(0, uid(1), 10, 0)])
+    sc.block([transfer(0, uid(1), 10, 1)])
+    sc.block([])
+    for v in sc.chain.validators.values():
+        assert v["reward_account"] not in sc.chain.accounts  # shares of 0 never created accounts
+    return sc
+
+
+def scenario_long_run():
+    funded = [(uid(i), (i + 1) * 3 * YAP) for i in range(6)]
+    sc = Scenario("long_run", reference_genesis(extra_accounts=funded))
+    rng = random.Random(0x59415043)
+    for _ in range(40):
+        txs = []
+        for _ in range(rng.randint(0, 9)):
+            i = rng.randrange(8)
+            acct = sc.chain.accounts.get(uid(i), {"balance": 0, "nonce": 0})
+            nonce = acct["nonce"] + sum(1 for t in txs if tx_ref.decode_tx(t)[0]["sender_pubkey"] ==
+                                        ed.public_key(USERS[i]))
+            if rng.random() < 0.15:
+                nonce += rng.choice([-1, 1, 3])
+            nonce = max(nonce, 0)
+            amount = rng.choice([1, 999, rng.randrange(1, max(2, acct["balance"] + 2 * YAP))])
+            if rng.random() < 0.7:
+                to = uid(rng.randrange(8))
+                if to == uid(i):
+                    to = uid((i + 1) % 8)
+                txs.append(transfer(i, to, amount, nonce, fee=rng.choice([1000, 1000, 2500, 999])))
+            else:
+                txs.append(burn(i, amount, nonce))
+        flags = [rng.choice([1, 2, 2, 2, 3]) for _ in range(4)]
+        sc.block(txs, flags=flags)
+    codes = [c for b in sc.blocks for c in b["codes"]]
+    assert codes.count("OK") > 50 and len(set(codes)) >= 4, (codes.count("OK"), set(codes))
+    return sc
+
+
+def gen_blocks():
+    return {"scenarios": [s.to_json() for s in (scenario_basics(), scenario_emission_cap(),
+                                                 scenario_zero_shares(), scenario_long_run())]}
+
+
 # --------------------------------------------------------------------------- main
 def write(out_dir, name, obj):
     path = os.path.join(out_dir, name)
@@ -841,6 +979,7 @@ def main():
     write(args.out, "economics.json", gen_economics())
     write(args.out, "merkle.json", gen_merkle())
     write(args.out, "genesis.json", gen_genesis())
+    write(args.out, "blocks.json", gen_blocks())
     return 0
 
 

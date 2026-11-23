@@ -30,7 +30,8 @@ if(YAP_BUILD_TESTS)
     vectors/validation_vectors_test.cpp
     vectors/economics_vectors_test.cpp
     vectors/merkle_vectors_test.cpp
-    vectors/genesis_vectors_test.cpp)
+    vectors/genesis_vectors_test.cpp
+    vectors/blocks_vectors_test.cpp)
   target_link_libraries(yap_vector_tests PRIVATE yap_test_support nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
   target_compile_definitions(yap_vector_tests PRIVATE YAP_TEST_VECTORS_DIR="${PROJECT_SOURCE_DIR}/test-vectors")
   yap_target_warnings(yap_vector_tests)
