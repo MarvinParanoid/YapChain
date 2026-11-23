@@ -52,6 +52,15 @@ std::vector<dev::DevBlock> decode_journal(ByteView data) {
 
 std::string reject_message(const dev::BlockRejected& e) { return std::string("block rejected: ") + e.what(); }
 
+/// The dev chain of an opened store; an uninitialised database is a user error (exit 2).
+std::unique_ptr<dev::DevChain> open_dev_chain(storage::LmdbStore& store) {
+    {
+        chain::Engine probe(store);
+        if (!probe.initialized()) throw CliError(kExitRejected, "the local chain is not initialised (run `yap dev init`)");
+    }
+    return std::make_unique<dev::DevChain>(store);
+}
+
 }  // namespace
 
 void register_dev(CLI::App& app, Context& ctx) {
@@ -107,7 +116,8 @@ void register_dev(CLI::App& app, Context& ctx) {
         std::vector<Bytes> candidates;
         for (const auto& f : pa->txs) candidates.push_back(read_hex_file(f));
         auto store = open_store(ctx, false, false);
-        dev::DevChain chain(*store);
+        auto chain_ptr = open_dev_chain(*store);
+        auto& chain = *chain_ptr;
         if (pa->require_all) {  // dry run with codes before asking for the password
             std::vector<tx::TxCode> codes;
             auto probe = chain.context_for(dev::DevBlock{});
@@ -147,7 +157,8 @@ void register_dev(CLI::App& app, Context& ctx) {
         auto b = ycs::decode<dev::DevBlock>(read_hex_file(*imp));
         if (!b) throw CliError(kExitRejected, "not a dev block: " + std::string(ycs::to_string(b.error())));
         auto store = open_store(ctx, false, false);
-        dev::DevChain chain(*store);
+        auto chain_ptr = open_dev_chain(*store);
+        auto& chain = *chain_ptr;
         try {
             chain.import(*b);
         } catch (const dev::BlockRejected& e) {
@@ -164,11 +175,11 @@ void register_dev(CLI::App& app, Context& ctx) {
     bl->add_option("--out", bh->second, "Write the block (hex) to this file");
     bl->callback([&ctx, bh] {
         auto store = open_store(ctx, true, false);
-        dev::DevChain chain(*store);
-        const auto b = chain.block(bh->first);
+        auto chain_ptr = open_dev_chain(*store);
+        const auto b = chain_ptr->block(bh->first);
         if (!b) throw CliError(kExitRejected, "no block at height " + std::to_string(bh->first));
         print_block(*b);
-        if (!bh->second.empty()) write_file_bytes(bh->second, as_bytes(to_hex(ycs::encode(*b)) + "\n"));
+        if (!bh->second.empty()) write_file_bytes(bh->second, as_bytes(to_hex(ycs::encode(*b)) + "\n"), ctx.force);
     });
 
     // export
@@ -177,10 +188,14 @@ void register_dev(CLI::App& app, Context& ctx) {
     ex->add_option("--out", *exp, "Journal file")->required();
     ex->callback([&ctx, exp] {
         auto store = open_store(ctx, true, false);
-        dev::DevChain chain(*store);
+        auto chain_ptr = open_dev_chain(*store);
         std::vector<dev::DevBlock> blocks;
-        for (std::uint64_t h = 1; h <= chain.engine().info().last_height; ++h) blocks.push_back(*chain.block(h));
-        write_file_bytes(*exp, as_bytes(to_hex(encode_journal(blocks)) + "\n"));
+        for (std::uint64_t h = 1; h <= chain_ptr->engine().info().last_height; ++h) {
+            auto b = chain_ptr->block(h);
+            if (!b) throw chain::StoreCorruption("dev block " + std::to_string(h) + " is missing");
+            blocks.push_back(std::move(*b));
+        }
+        write_file_bytes(*exp, as_bytes(to_hex(encode_journal(blocks)) + "\n"), ctx.force);
         out("blocks", blocks.size());
         out("journal", *exp);
     });
@@ -192,7 +207,8 @@ void register_dev(CLI::App& app, Context& ctx) {
     re->callback([&ctx, rp] {
         const auto blocks = decode_journal(read_hex_file(*rp));
         auto store = open_store(ctx, false, false);
-        dev::DevChain chain(*store);
+        auto chain_ptr = open_dev_chain(*store);
+        auto& chain = *chain_ptr;
         dev::ReplayStats st;
         try {
             st = chain.replay(blocks);

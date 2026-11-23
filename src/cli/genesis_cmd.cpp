@@ -96,8 +96,7 @@ void register_genesis(CLI::App& app, Context& /*ctx*/) {
     n->callback([a] {
         const auto g = build_genesis(*a);
         const auto text = chain::to_genesis_json(g);
-        if (std::filesystem::exists(a->out)) throw CliError(kExitRejected, a->out + " already exists");
-        write_file_bytes(a->out, as_bytes(text));
+        write_file_bytes(a->out, as_bytes(text));  // never overwrites (O_EXCL)
         out("genesis_file", a->out);
         out("genesis_hash", to_hex(chain::genesis_hash(g)));
     });

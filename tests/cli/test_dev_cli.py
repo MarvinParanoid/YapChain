@@ -131,6 +131,27 @@ def main(yap, corrupt):
         check("schema" in out.stderr, "schema mismatch reported")
         a.run("dev", "produce", expect=3)
         Cli(yap, f("home-empty"), pw).run("query", "chain", expect=2)  # no chain
+
+        # Exit codes (audit M1.5): nothing ends up as 5 "internal error".
+        empty = Cli(yap, f("home-uninit"), pw)
+        subprocess.run([corrupt, os.path.join(f("home-uninit"), "data"), "empty-db"], check=True)
+        for cmd in (["dev", "export", "--out", f("e.hex")], ["dev", "block", "--height", "1"],
+                    ["dev", "import", f("block1.hex")], ["dev", "replay", "--journal", f("journal.hex")],
+                    ["dev", "produce"], ["query", "chain"], ["dev", "state-root"]):
+            out = empty.run(*cmd, expect=2)
+            check("not initialised" in out.stderr or "no local chain" in out.stderr, f"{cmd}: {out.stderr}")
+        d2 = Cli(yap, f("home-d2"), pw)
+        d2.run("dev", "init", "--genesis", f("genesis.json"), "--producer-pubkey", producer)
+        d2.run("dev", "import", f("block1.hex"))
+        subprocess.run([corrupt, os.path.join(f("home-d2"), "data"), "smt-nonroot"], check=True)
+        out = d2.run("dev", "import", f("block2.hex"), expect=3)  # SmtCorruption on the update path
+        check("storage error" in out.stderr and "SMT" in out.stderr, f"SMT corruption is a storage error: {out.stderr}")
+        os.chmod(os.path.join(f("home-a"), "keys"), 0)
+        try:
+            out = a.run("keys", "list", expect=None)
+            check(out.returncode in (3, 4), f"unreadable keys directory: exit {out.returncode}")
+        finally:
+            os.chmod(os.path.join(f("home-a"), "keys"), 0o700)
         print("dev CLI: OK")
     finally:
         shutil.rmtree(d)

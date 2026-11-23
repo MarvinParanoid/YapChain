@@ -9,6 +9,7 @@
 #include "yap/chain/store_layout.hpp"
 #include "yap/common/fail_stop.hpp"
 #include "yap/dev/dev_chain.hpp"
+#include "yap/merkle/persistent_smt.hpp"
 #include "yap/storage/store.hpp"
 
 int main(int argc, char** argv) {
@@ -22,6 +23,7 @@ int main(int argc, char** argv) {
     app.add_option("--home", home, "Data directory (default: $YAP_HOME or ~/.yapchain)");
     app.add_option("--password-file", password_file,
                    "Read the password from this file (mode 0600) instead of the terminal/stdin");
+    app.add_flag("--force", ctx.force, "Allow overwriting existing output files");
     app.parse_complete_callback([&] {
         ctx.home = home.empty() ? default_home() : std::filesystem::path(home);
         ctx.password_file = password_file;
@@ -43,6 +45,12 @@ int main(int argc, char** argv) {
     } catch (const yap::dev::BlockRejected& e) {
         std::cerr << "error: block rejected: " << e.what() << "\n";
         return kExitRejected;
+    } catch (const yap::merkle::SmtCorruption& e) {
+        std::cerr << "storage error: " << e.what() << "\n";
+        return kExitStorage;
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "storage error: " << e.what() << "\n";
+        return kExitStorage;
     } catch (const yap::chain::IncompatibleSchema& e) {
         std::cerr << "storage error: " << e.what() << "\n";
         return kExitStorage;

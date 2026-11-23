@@ -295,7 +295,7 @@ void write_private_file(const std::filesystem::path& path, std::string_view cont
 
 std::string read_private_file(const std::filesystem::path& path) {
     struct stat st {};
-    if (::stat(path.c_str(), &st) != 0) throw std::runtime_error(path.string() + ": no such key file");
+    if (::stat(path.c_str(), &st) != 0) throw std::runtime_error(path.string() + ": " + std::strerror(errno));
     if ((st.st_mode & 077) != 0) {
         throw std::runtime_error(path.string() + ": permissions too open (must not be accessible by group/others)");
     }

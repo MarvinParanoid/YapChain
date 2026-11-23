@@ -37,6 +37,7 @@ private:
 struct Context {
     std::filesystem::path home;           ///< --home, $YAP_HOME or ~/.yapchain
     std::filesystem::path password_file;  ///< --password-file (optional)
+    bool force = false;                   ///< --force: allow overwriting output files
 
     [[nodiscard]] std::filesystem::path keys_dir() const { return home / "keys"; }
     [[nodiscard]] std::filesystem::path dev_dir() const { return home / "dev"; }
@@ -56,7 +57,9 @@ void out(std::string_view key, std::string_view value);
 void out(std::string_view key, std::uint64_t value);
 
 [[nodiscard]] Bytes read_file_bytes(const std::filesystem::path& path);
-void write_file_bytes(const std::filesystem::path& path, ByteView data);
+/// Creates an output file. Refuses to replace an existing file (or follow a symlink) unless
+/// `overwrite` is set; I/O failures are storage errors (exit 3).
+void write_file_bytes(const std::filesystem::path& path, ByteView data, bool overwrite = false);
 /// Reads a file that holds hex (whitespace ignored); throws CliError on bad hex.
 [[nodiscard]] Bytes read_hex_file(const std::filesystem::path& path);
 

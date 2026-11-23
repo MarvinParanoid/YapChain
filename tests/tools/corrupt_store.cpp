@@ -5,6 +5,7 @@
 //   yap_test_corrupt <data_dir> balance <account_id_hex>   add 1 yip to an account behind the engine
 //   yap_test_corrupt <data_dir> schema                      set the schema version to 2
 //   yap_test_corrupt <data_dir> smt-node                    flip a byte of one stored SMT node
+#include <algorithm>
 #include <cstdio>
 #include <string>
 
@@ -21,7 +22,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     storage::LmdbStore::Options o{argv[1]};
-    o.create = false;
+    o.create = std::string(argv[2]) == "empty-db";  // empty-db: create the tables and nothing else
     storage::LmdbStore store(o);
     const std::string mode = argv[2];
     storage::WriteBatch b;
@@ -36,6 +37,16 @@ int main(int argc, char** argv) {
         auto raw = store.get(storage::Table::Meta, chain::meta_key()).value();
         raw[0] = 2;
         b.put(storage::Table::Meta, chain::meta_key(), raw);
+    } else if (mode == "empty-db") {
+        return 0;  // opening with create=false already required the tables; nothing to write
+    } else if (mode == "smt-nonroot") {
+        const auto meta = ycs::decode<chain::StoreMeta>(store.get(storage::Table::Meta, chain::meta_key()).value()).value();
+        store.for_each(storage::Table::Smt, [&](const Bytes& k, const Bytes& v) {
+            if (Hash32 h{}; std::equal(k.begin(), k.end(), meta.last_state_root.begin()) && k.size() == h.size()) return;
+            Bytes damaged = v;
+            damaged[40] ^= 1;
+            b.put(storage::Table::Smt, k, damaged);
+        });
     } else if (mode == "smt-node") {
         Bytes k, v;
         store.for_each(storage::Table::Smt, [&](const Bytes& kk, const Bytes& vv) {

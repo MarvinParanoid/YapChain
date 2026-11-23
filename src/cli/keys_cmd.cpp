@@ -75,10 +75,17 @@ void register_keys(CLI::App& app, Context& ctx) {
             }
         }
         std::sort(files.begin(), files.end());
+        bool bad = false;
         for (const auto& f : files) {
-            const auto info = load_key_info(f, wallet::KeyPurpose::Account);
-            std::cout << f.stem().string() << " " << info.address << "\n";
+            try {
+                const auto info = load_key_info(f, wallet::KeyPurpose::Account);
+                std::cout << f.stem().string() << " " << info.address << "\n";
+            } catch (const CliError& e) {
+                std::cerr << "error: " << e.what() << "\n";  // report and keep listing the others
+                bad = true;
+            }
         }
+        if (bad) throw CliError(kExitAuth, "some key files could not be read");
     });
 
     auto show_name = std::make_shared<std::string>();

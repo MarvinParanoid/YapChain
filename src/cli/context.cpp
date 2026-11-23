@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "context.hpp"
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
@@ -88,11 +91,24 @@ Bytes read_file_bytes(const std::filesystem::path& path) {
     return Bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-void write_file_bytes(const std::filesystem::path& path, ByteView data) {
-    std::ofstream o(path, std::ios::binary | std::ios::trunc);
-    o.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    o.close();
-    if (!o) throw CliError(kExitUsage, "cannot write " + path.string());
+void write_file_bytes(const std::filesystem::path& path, ByteView data, bool overwrite) {
+    const int flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW | (overwrite ? O_TRUNC : O_EXCL);
+    const int fd = ::open(path.c_str(), flags, 0644);
+    if (fd < 0) {
+        if (errno == EEXIST) throw CliError(kExitRejected, path.string() + " already exists (use --force to overwrite)");
+        throw CliError(kExitStorage, "cannot create " + path.string() + ": " + std::strerror(errno));
+    }
+    std::size_t done = 0;
+    while (done < data.size()) {
+        const auto n = ::write(fd, data.data() + done, data.size() - done);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            ::close(fd);
+            throw CliError(kExitStorage, "cannot write " + path.string() + ": " + std::strerror(errno));
+        }
+        done += static_cast<std::size_t>(n);
+    }
+    if (::close(fd) != 0) throw CliError(kExitStorage, "cannot write " + path.string());
 }
 
 Bytes read_hex_file(const std::filesystem::path& path) {

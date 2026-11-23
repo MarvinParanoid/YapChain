@@ -125,9 +125,9 @@ void print_body(const tx::TxBody& b) {
     out("memo_hex", to_hex(b.memo));
 }
 
-void write_hex(const std::string& path, ByteView data) {
+void write_hex(const Context& ctx, const std::string& path, ByteView data) {
     const std::string h = to_hex(data) + "\n";
-    write_file_bytes(path, as_bytes(h));
+    write_file_bytes(path, as_bytes(h), ctx.force);
 }
 
 tx::SignedTx sign_body(const Context& ctx, const tx::TxBody& body, const std::string& key_name, bool yes) {
@@ -169,7 +169,7 @@ void register_tx(CLI::App& app, Context& ctx) {
     add_build_options(b, *build, true);
     b->callback([&ctx, build] {
         const auto body = build_body(ctx, *build);
-        write_hex(build->out, ycs::encode(body));
+        write_hex(ctx, build->out, ycs::encode(body));
         print_body(body);
         out("body_file", build->out);
     });
@@ -186,7 +186,7 @@ void register_tx(CLI::App& app, Context& ctx) {
         print_body(*body);  // shown before signing
         const auto stx = sign_body(ctx, *body, std::get<0>(*sign), std::get<3>(*sign));
         const Bytes bytes = ycs::encode(stx);
-        write_hex(std::get<2>(*sign), bytes);
+        write_hex(ctx, std::get<2>(*sign), bytes);
         out("tx_id", to_hex(tx::tx_id(bytes)));
         out("tx_file", std::get<2>(*sign));
     });
@@ -208,6 +208,7 @@ void register_tx(CLI::App& app, Context& ctx) {
                 const auto r = tx::check_stateless(bytes, local->engine->info().chain_id, local->params());
                 out("stateless_check", tx::to_string(r.code));
             }
+            if (!sig_ok) throw CliError(kExitRejected, "the transaction signature is invalid");
             return;
         }
         if (auto body = ycs::decode<tx::TxBody>(bytes)) {
@@ -230,7 +231,7 @@ void register_tx(CLI::App& app, Context& ctx) {
             print_body(body);
             const auto stx = sign_body(ctx, body, args->from, args->yes);
             const Bytes bytes = ycs::encode(stx);
-            write_hex(args->out, bytes);
+            write_hex(ctx, args->out, bytes);
             out("tx_id", to_hex(tx::tx_id(bytes)));
             out("tx_file", args->out);
         });

@@ -74,7 +74,15 @@ def main(yap):
         t = bytearray(raw)
         t[-1] ^= 1
         open(f("bad.hex"), "w").write(bytes(t).hex())
-        check(cli.kv("tx", "inspect", f("bad.hex"))["signature"] == "INVALID", "tampered signature")
+        bad_sig = cli.run("tx", "inspect", f("bad.hex"), expect=2)  # shown, but reported as invalid
+        check("signature: INVALID" in bad_sig.stdout, "tampered signature")
+        # Output files are never overwritten silently (audit M1.5) ...
+        cli.run("tx", "sign", "--key", "alice", "--in", f("body.hex"), "--out", f("tx1.hex"), expect=2)
+        check(read_hex(f("tx1.hex")) == raw, "existing output untouched")
+        cli.run("--force", "tx", "sign", "--key", "alice", "--in", f("body.hex"), "--out", f("tx1.hex"))  # ... unless forced
+        os.symlink(f("victim"), f("link.hex"))
+        cli.run("--force", "tx", "sign", "--key", "alice", "--in", f("body.hex"), "--out", f("link.hex"), expect=3)
+        check(not os.path.exists(f("victim")), "symlinks are not followed")
         open(f("junk.hex"), "w").write("00ff")
         cli.run("tx", "inspect", f("junk.hex"), expect=2)
         open(f("nothex.hex"), "w").write("xyz")
