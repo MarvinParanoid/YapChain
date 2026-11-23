@@ -214,3 +214,25 @@ TEST_CASE("a failed dev-block commit leaves the chain usable", "[dev][audit]") {
     CHECK_NOTHROW(c.produce(producer_key(), {}));
     CHECK(c.engine().info().last_height == 1);
 }
+
+TEST_CASE("dev import enforces the protocol size limits before committing", "[dev][audit]") {
+    const auto net = TestNet::make(5);
+    storage::MemoryStore store;
+    dev::DevChain::init(store, net.genesis, producer_key().public_key());
+    dev::DevChain c(store);
+    dev::DevBlock b;
+    b.header.chain_id = net.genesis.chain_id;
+    b.header.height = 1;
+    b.header.time_ms = net.genesis.genesis_time_ms + 1;
+    b.header.prev_block_hash = c.tip_hash();
+    b.header.producer_pubkey = producer_key().public_key();
+    b.txs.assign(dev::kMaxDevBlockTxs + 1, Bytes{1});
+    b.header.tx_root = merkle::rfc6962_root(b.txs);
+    b.signature = dev::sign_header(b.header, producer_key());
+    CHECK(reject_reason(c, b) == Reject::LimitExceeded);
+    b.txs = {Bytes(dev::kMaxDevBlockTxBytes + 1, 0)};
+    b.header.tx_root = merkle::rfc6962_root(b.txs);
+    b.signature = dev::sign_header(b.header, producer_key());
+    CHECK(reject_reason(c, b) == Reject::LimitExceeded);
+    CHECK(c.engine().info().last_height == 0);
+}

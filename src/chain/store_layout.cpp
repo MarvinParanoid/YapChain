@@ -3,6 +3,8 @@
 
 #include "yap/common/hex.hpp"
 
+#include <limits>
+
 namespace yap::chain {
 
 Bytes meta_key() {
@@ -60,7 +62,10 @@ BlockRecord BlockRecord::decode_from(ycs::Reader& r) {
     BlockRecord b;
     b.height = r.u64();
     b.state_root = r.fixed<32>();
-    const auto n = r.vec_length(100'000, 4);
+    // No artificial cap: the record was written by this node for a block it executed, and the
+    // count is still bounded by the bytes present. (A 100 000 cap made a store unreadable after a
+    // legitimately committed block with more transactions — audit M1.5.)
+    const auto n = r.vec_length(std::numeric_limits<std::uint32_t>::max(), 4);
     for (std::uint32_t i = 0; i < n && r.ok(); ++i) b.codes.push_back(r.u32());
     return b;
 }

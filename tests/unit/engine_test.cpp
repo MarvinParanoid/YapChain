@@ -315,3 +315,21 @@ TEST_CASE("two concurrent initialisations cannot both succeed", "[engine][audit]
     CHECK_THROWS_AS(b.init_chain(other), storage::StorageConflict);
     CHECK(chain::read_meta(store)->genesis_hash == chain::genesis_hash(genesis()));
 }
+
+TEST_CASE("a store stays readable after a block with more than 100 000 transactions", "[engine][lmdb][audit]") {
+    // Audit M1.5: the block-record decoder was capped at 100 000 codes, so a node could not restart
+    // after committing a larger block (plausible with CometBFT's default block size).
+    const auto g = genesis();
+    test::TempDir dir;
+    {
+        storage::LmdbStore store({dir.path()});
+        chain::Engine e(store);
+        e.init_chain(g);
+        e.finalize_block(ctx(g, 1, std::vector<Bytes>(100'001, Bytes{0})));
+        e.commit();
+    }
+    storage::LmdbStore store({dir.path()});
+    chain::Engine e(store);
+    CHECK(e.info().last_height == 1);
+    CHECK(e.block_record(1)->codes.size() == 100'001);
+}

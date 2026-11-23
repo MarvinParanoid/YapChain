@@ -29,6 +29,7 @@ enum class Reject : std::uint8_t {
     InvalidTransaction,
     BadStateRoot,
     Conflict,          ///< replay: a different block is already stored at this height
+    LimitExceeded,     ///< more than 10 000 transactions or a transaction above 65 536 bytes (§3.3)
 };
 [[nodiscard]] std::string_view to_string(Reject r) noexcept;
 

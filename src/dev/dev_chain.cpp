@@ -23,6 +23,7 @@ std::string_view to_string(Reject r) noexcept {
         case Reject::InvalidTransaction: return "block contains an invalid transaction";
         case Reject::BadStateRoot: return "state_root mismatch";
         case Reject::Conflict: return "a different block is stored at this height";
+        case Reject::LimitExceeded: return "dev block exceeds the protocol size limits";
     }
     return "rejected";
 }
@@ -132,6 +133,11 @@ state::BlockResult DevChain::import(const DevBlock& b) {
     const auto last_time = state::State(view).chain_state().last_time_ms;  // genesis time at height 0
     if (h.height == 1 ? h.time_ms < last_time : h.time_ms <= last_time) {
         throw reject(Reject::BadTime, std::to_string(h.time_ms) + " vs previous " + std::to_string(last_time));
+    }
+    // §3.3 limits: a block the decoder would refuse must never be committed (it could not be read back).
+    if (b.txs.size() > kMaxDevBlockTxs) throw reject(Reject::LimitExceeded, std::to_string(b.txs.size()) + " transactions");
+    for (const auto& t : b.txs) {
+        if (t.size() > kMaxDevBlockTxBytes) throw reject(Reject::LimitExceeded, "transaction of " + std::to_string(t.size()) + " bytes");
     }
     if (h.producer_pubkey != config_.producer) throw reject(Reject::WrongProducer, to_hex(h.producer_pubkey));
     if (!verify_header_signature(b)) throw reject(Reject::BadSignature, "height " + std::to_string(h.height));
