@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 add_library(yap_test_support INTERFACE)
 target_include_directories(yap_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/support)
-target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx yap::state)
+target_link_libraries(yap_test_support INTERFACE yap::codec yap::crypto yap::tx yap::state yap::chain)
 
 if(YAP_BUILD_TESTS)
   include(Catch)
@@ -17,7 +17,8 @@ if(YAP_BUILD_TESTS)
     unit/validation_test.cpp
     unit/ledger_test.cpp
     unit/economics_test.cpp
-    unit/merkle_test.cpp)
+    unit/merkle_test.cpp
+    unit/genesis_test.cpp)
   target_link_libraries(yap_unit_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_unit_tests)
   catch_discover_tests(yap_unit_tests TEST_PREFIX "unit:")
@@ -27,7 +28,8 @@ if(YAP_BUILD_TESTS)
     vectors/tx_vectors_test.cpp
     vectors/validation_vectors_test.cpp
     vectors/economics_vectors_test.cpp
-    vectors/merkle_vectors_test.cpp)
+    vectors/merkle_vectors_test.cpp
+    vectors/genesis_vectors_test.cpp)
   target_link_libraries(yap_vector_tests PRIVATE yap_test_support nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
   target_compile_definitions(yap_vector_tests PRIVATE YAP_TEST_VECTORS_DIR="${PROJECT_SOURCE_DIR}/test-vectors")
   yap_target_warnings(yap_vector_tests)

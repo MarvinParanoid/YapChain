@@ -49,6 +49,7 @@ add_subdirectory(src/crypto)
 add_subdirectory(src/merkle)
 add_subdirectory(src/tx)
 add_subdirectory(src/state)
+add_subdirectory(src/chain)
 
 if(YAP_BUILD_TESTS OR YAP_FUZZ)
   enable_testing()

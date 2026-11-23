@@ -39,6 +39,56 @@ ValidatorInfo ValidatorInfo::decode_from(ycs::Reader& r) {
     return v;
 }
 
+void Issuer::encode_to(ycs::Writer& w) const {
+    w.u32(issuer_id);
+    w.string(name);
+    w.u8(status);
+    w.u64(epoch_budget);
+    w.length(keys.size());
+    for (const auto& k : keys) {
+        w.u8(k.key_id);
+        w.fixed(k.pubkey);
+        w.u8(k.status);
+    }
+}
+
+Issuer Issuer::decode_from(ycs::Reader& r) {
+    Issuer i;
+    i.issuer_id = r.u32();
+    i.name = r.ascii_printable(kMaxNameBytes);
+    i.status = r.u8();
+    i.epoch_budget = r.u64();
+    const std::uint32_t n = r.vec_length(kMaxIssuerKeys, 1 + 32 + 1);
+    for (std::uint32_t k = 0; k < n && r.ok(); ++k) {
+        IssuerKey key;
+        key.key_id = r.u8();
+        key.pubkey = r.fixed<32>();
+        key.status = r.u8();
+        i.keys.push_back(key);
+    }
+    return i;
+}
+
+void Achievement::encode_to(ycs::Writer& w) const {
+    w.u32(issuer_id);
+    w.u32(achievement_id);
+    w.u64(reward);
+    w.u8(policy);
+    w.u16(max_per_epoch);
+    w.u8(status);
+}
+
+Achievement Achievement::decode_from(ycs::Reader& r) {
+    Achievement a;
+    a.issuer_id = r.u32();
+    a.achievement_id = r.u32();
+    a.reward = r.u64();
+    a.policy = r.u8();
+    a.max_per_epoch = r.u16();
+    a.status = r.u8();
+    return a;
+}
+
 ConsensusAddress consensus_address(const crypto::PublicKey& pubkey) {
     const Hash32 h = crypto::sha256(pubkey);
     ConsensusAddress a{};

@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "yap/codec/ycs.hpp"
 #include "yap/crypto/address.hpp"
@@ -51,6 +52,46 @@ struct ValidatorInfo {
     bool operator==(const ValidatorInfo&) const = default;
     void encode_to(ycs::Writer& w) const;
     static ValidatorInfo decode_from(ycs::Reader& r);
+};
+
+/// attestations.md §3.2. Status values: 1 = active, 2 = suspended/revoked/disabled.
+inline constexpr std::uint8_t kStatusActive = 1;
+inline constexpr std::uint8_t kStatusInactive = 2;
+inline constexpr std::uint32_t kMaxIssuerKeys = 8;
+
+struct IssuerKey {
+    std::uint8_t key_id = 0;
+    crypto::PublicKey pubkey{};
+    std::uint8_t status = kStatusActive;
+    bool operator==(const IssuerKey&) const = default;
+};
+
+struct Issuer {
+    std::uint32_t issuer_id = 0;
+    std::string name;
+    std::uint8_t status = kStatusActive;
+    std::uint64_t epoch_budget = 0;
+    std::vector<IssuerKey> keys;
+
+    bool operator==(const Issuer&) const = default;
+    void encode_to(ycs::Writer& w) const;
+    static Issuer decode_from(ycs::Reader& r);
+};
+
+inline constexpr std::uint8_t kPolicyOnce = 1;
+inline constexpr std::uint8_t kPolicyPerEpoch = 2;
+
+struct Achievement {
+    std::uint32_t issuer_id = 0;
+    std::uint32_t achievement_id = 0;
+    std::uint64_t reward = 0;
+    std::uint8_t policy = kPolicyOnce;
+    std::uint16_t max_per_epoch = 0;
+    std::uint8_t status = kStatusActive;
+
+    bool operator==(const Achievement&) const = default;
+    void encode_to(ycs::Writer& w) const;
+    static Achievement decode_from(ycs::Reader& r);
 };
 
 /// CometBFT consensus address: first 20 bytes of SHA-256(pubkey) (protocol.md §5.5).

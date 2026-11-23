@@ -54,6 +54,21 @@ set_target_properties(yap_sodium PROPERTIES
 add_dependencies(yap_sodium yap_libsodium_build)
 add_library(yap::sodium ALIAS yap_sodium)
 
+# ------------------------------------------------------------------ nlohmann/json 3.12.0
+# Used by the core only to parse the genesis JSON (protocol.md §11.3); never for hashing.
+set(YAP_JSON_VERSION 3.12.0)
+set(YAP_JSON_SHA256 42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa)
+yap_dep_url(_yap_json_url "json-${YAP_JSON_VERSION}.tar.xz"
+  "https://github.com/nlohmann/json/releases/download/v${YAP_JSON_VERSION}/json.tar.xz")
+FetchContent_Declare(nlohmann_json
+  URL "${_yap_json_url}"
+  URL_HASH SHA256=${YAP_JSON_SHA256}
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SYSTEM)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # ------------------------------------------------------------------ test-only dependencies
 if(YAP_BUILD_TESTS OR YAP_FUZZ)
   set(YAP_CATCH2_VERSION 3.16.1)
@@ -66,20 +81,8 @@ if(YAP_BUILD_TESTS OR YAP_FUZZ)
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SYSTEM)
 
-  set(YAP_JSON_VERSION 3.12.0)
-  set(YAP_JSON_SHA256 42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa)
-  yap_dep_url(_yap_json_url "json-${YAP_JSON_VERSION}.tar.xz"
-    "https://github.com/nlohmann/json/releases/download/v${YAP_JSON_VERSION}/json.tar.xz")
-  FetchContent_Declare(nlohmann_json
-    URL "${_yap_json_url}"
-    URL_HASH SHA256=${YAP_JSON_SHA256}
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    SYSTEM)
-
   set(CATCH_INSTALL_DOCS OFF CACHE BOOL "" FORCE)
   set(CATCH_INSTALL_EXTRAS OFF CACHE BOOL "" FORCE)
-  set(JSON_Install OFF CACHE BOOL "" FORCE)
-  set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(Catch2 nlohmann_json)
+  FetchContent_MakeAvailable(Catch2)
   list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 endif()

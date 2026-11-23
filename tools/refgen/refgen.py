@@ -19,6 +19,7 @@ import bech32m_ref as b32  # noqa: E402
 import ed25519_ref as ed  # noqa: E402
 import economics_ref as econ  # noqa: E402
 import merkle_ref  # noqa: E402
+import state_ref  # noqa: E402
 import tx_ref  # noqa: E402
 from ycs_ref import DecodeError  # noqa: E402
 import ycs_ref as ycs  # noqa: E402
@@ -675,6 +676,145 @@ def gen_merkle():
     return {"smt": smt, "state": state, "rfc6962": lists}
 
 
+# --------------------------------------------------------------------------- genesis
+YAP = 1_000_000
+
+
+def reference_genesis(params=None, extra_accounts=(), n_validators=4):
+    """Testnet-like genesis following economics.md §3 (amounts in yip)."""
+    treasury = tagged_hash("YAP/sys-account/v1", b"treasury")
+    pool = tagged_hash("YAP/sys-account/v1", b"rewards-pool")
+    faucet = account_id(ed.public_key(seed(500)))
+    accounts = {treasury: 80_000_000 * YAP, pool: 60_000_000 * YAP, faucet: 50_000_000 * YAP}
+    validators = []
+    for i in range(n_validators):
+        operator = account_id(ed.public_key(seed(510 + i)))
+        accounts[operator] = 2_500_000 * YAP
+        validators.append({"consensus_pubkey": ed.public_key(seed(520 + i)), "power": 10,
+                           "reward_account": operator, "name": f"validator-{i + 1}"})
+    for aid, bal in extra_accounts:
+        accounts[aid] = accounts.get(aid, 0) + bal
+    validators.sort(key=lambda v: state_ref.consensus_address(v["consensus_pubkey"]))
+    return {
+        "chain_id": CHAIN_ID, "genesis_time_ms": 1_767_225_600_000, "initial_height": 1,
+        "params": dict(params or tx_ref.TESTNET_PARAMS),
+        "accounts": [{"account_id": k, "balance": v} for k, v in sorted(accounts.items())],
+        "validators": validators,
+        "issuers": [{"issuer_id": 1, "name": "Mempassport", "status": 1, "epoch_budget": 1_000_000 * YAP,
+                     "keys": [{"key_id": 0, "pubkey": ed.public_key(seed(530)), "status": 1},
+                              {"key_id": 1, "pubkey": ed.public_key(seed(531)), "status": 2}]},
+                    {"issuer_id": 7, "name": "Yapped", "status": 1, "epoch_budget": 10_000 * YAP,
+                     "keys": [{"key_id": 3, "pubkey": ed.public_key(seed(532)), "status": 1}]}],
+        "achievements": [{"issuer_id": 1, "achievement_id": 1, "reward": 100 * YAP, "policy": 1,
+                          "max_per_epoch": 0, "status": 1},
+                         {"issuer_id": 1, "achievement_id": 2, "reward": 5 * YAP, "policy": 2,
+                          "max_per_epoch": 3, "status": 1},
+                         {"issuer_id": 7, "achievement_id": 1, "reward": 1, "policy": 1,
+                          "max_per_epoch": 0, "status": 2}],
+    }
+
+
+def genesis_text(g):
+    return json.dumps(state_ref.to_json_obj(g), indent=1, ensure_ascii=True)
+
+
+def genesis_entry(name, g):
+    text = genesis_text(g)
+    assert state_ref.parse_genesis_json(text) == g, name
+    return {"name": name, "json": text, "genesis_hash": hx(state_ref.genesis_hash(g)),
+            "ycs": hx(state_ref.encode_genesis(g)), "initial_state_root": hx(merkle_ref.state_root(
+                state_ref.initial_state(g)))}
+
+
+def gen_genesis():
+    base = reference_genesis()
+    minimal = dict(base, accounts=[], issuers=[], achievements=[], validators=base["validators"][:1])
+    valid = [genesis_entry("testnet_reference", base), genesis_entry("minimal_one_validator", minimal)]
+
+    obj = state_ref.to_json_obj(base)
+
+    def mutate(fn):
+        o = json.loads(json.dumps(obj))
+        fn(o)
+        return json.dumps(o)
+
+    def setp(path, value):
+        def f(o):
+            cur = o
+            for p in path[:-1]:
+                cur = cur[p]
+            cur[path[-1]] = value
+        return mutate(f)
+
+    def drop(path):
+        def f(o):
+            cur = o
+            for p in path[:-1]:
+                cur = cur[p]
+            del cur[path[-1]]
+        return mutate(f)
+
+    vals = base["validators"]
+    invalid_texts = [
+        ("malformed_json", genesis_text(base)[:-2]),
+        ("duplicate_key", genesis_text(base).replace('"chain_id"', '"chain_id": "x", "chain_id"', 1)),
+        ("unknown_top_field", setp(["extra"], 1)),
+        ("missing_params_field", drop(["params", "min_fee"])),
+        ("unknown_params_field", setp(["params", "gas"], "1")),
+        ("u64_as_number", setp(["genesis_time_ms"], 1767225600000)),
+        ("u64_leading_zero", setp(["genesis_time_ms"], "01")),
+        ("u64_plus_sign", setp(["genesis_time_ms"], "+1")),
+        ("u64_overflow", setp(["genesis_time_ms"], "18446744073709551616")),
+        ("u16_as_string", setp(["params", "fee_burn_bps"], "5000")),
+        ("u16_negative", setp(["params", "fee_burn_bps"], -1)),
+        ("u16_float", genesis_text(base).replace('"fee_burn_bps": 5000', '"fee_burn_bps": 5000.0')),
+        ("u16_exponent", genesis_text(base).replace('"fee_burn_bps": 5000', '"fee_burn_bps": 5e3')),
+        ("u16_out_of_range", setp(["params", "fee_burn_bps"], 65536)),
+        ("u8_boolean", setp(["issuers", 0, "status"], True)),
+        ("hex_uppercase", setp(["validators", 0, "consensus_pubkey"], vals[0]["consensus_pubkey"].hex().upper())),
+        ("address_wrong_hrp", setp(["accounts", 0, "address"],
+                                   bech32m_ref_encode("yap", base["accounts"][0]["account_id"]))),
+        ("chain_id_invalid", setp(["chain_id"], "Yap")),
+        ("initial_height_2", setp(["initial_height"], "2")),
+        ("params_bps_sum", setp(["params", "reward_pool_bps"], 2999)),
+        ("params_min_fee_zero", setp(["params", "min_fee"], "0")),
+        ("accounts_unsorted", mutate(lambda o: o["accounts"].reverse())),
+        ("accounts_duplicate", mutate(lambda o: o["accounts"].insert(1, o["accounts"][0]))),
+        ("account_zero_balance", setp(["accounts", 0, "balance"], "0")),
+        ("supply_above_max_issuance", setp(["params", "max_issuance"], "1000")),
+        ("no_validators", setp(["validators"], [])),
+        ("validators_unsorted", mutate(lambda o: o["validators"].reverse())),
+        ("validator_power_zero", setp(["validators", 0, "power"], "0")),
+        ("validator_total_power_above_2_60", setp(["validators", 0, "power"], str(2**60))),
+        ("validator_small_order_key", setp(["validators", 0, "consensus_pubkey"], "01" + "00" * 31)),
+        ("validator_empty_name", setp(["validators", 0, "name"], "")),
+        ("validator_name_non_ascii", setp(["validators", 0, "name"], "валидатор")),
+        ("issuer_no_keys", setp(["issuers", 0, "keys"], [])),
+        ("issuer_bad_status", setp(["issuers", 0, "status"], 3)),
+        ("issuer_keys_unsorted", mutate(lambda o: o["issuers"][0]["keys"].reverse())),
+        ("issuers_unsorted", mutate(lambda o: o["issuers"].reverse())),
+        ("achievement_unknown_issuer", setp(["achievements", 0, "issuer_id"], 99)),
+        ("achievement_once_with_max", setp(["achievements", 0, "max_per_epoch"], 1)),
+        ("achievement_per_epoch_zero", setp(["achievements", 1, "max_per_epoch"], 0)),
+        ("achievement_bad_policy", setp(["achievements", 0, "policy"], 3)),
+        ("achievement_zero_reward", setp(["achievements", 0, "reward"], "0")),
+        ("achievements_unsorted", mutate(lambda o: o["achievements"].reverse())),
+    ]
+    invalid = []
+    for name, text in invalid_texts:
+        try:
+            state_ref.parse_genesis_json(text)
+            raise AssertionError("reference accepted invalid genesis " + name)
+        except (ValueError, state_ref.JsonSchemaError):
+            pass
+        invalid.append({"name": name, "json": text})
+    return {"valid": valid, "invalid": invalid}
+
+
+def bech32m_ref_encode(hrp, aid):
+    return b32.encode_address(hrp, aid)
+
+
 # --------------------------------------------------------------------------- main
 def write(out_dir, name, obj):
     path = os.path.join(out_dir, name)
@@ -700,6 +840,7 @@ def main():
     write(args.out, "validation.json", gen_validation())
     write(args.out, "economics.json", gen_economics())
     write(args.out, "merkle.json", gen_merkle())
+    write(args.out, "genesis.json", gen_genesis())
     return 0
 
 
