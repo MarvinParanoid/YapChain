@@ -67,7 +67,7 @@ jobs:
           cmake --build --preset fuzz
       - name: Run each target for 120 s
         run: |
-          for t in ycs bech32m tx; do
+          for t in ycs bech32m tx devblock; do
             mkdir -p "corpus/$t"
             ./build/fuzz/tests/fuzz_$t "corpus/$t" -max_total_time=120 -print_final_stats=1
           done

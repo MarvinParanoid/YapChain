@@ -12,11 +12,13 @@
 
 #include "sample.hpp"
 #include "yap/crypto/address.hpp"
+#include "yap/dev/dev_block.hpp"
 #include "yap/tx/transaction.hpp"
 
 extern "C" int yap_fuzz_ycs(const std::uint8_t* data, std::size_t size);
 extern "C" int yap_fuzz_bech32m(const std::uint8_t* data, std::size_t size);
 extern "C" int yap_fuzz_tx(const std::uint8_t* data, std::size_t size);
+extern "C" int yap_fuzz_devblock(const std::uint8_t* data, std::size_t size);
 
 namespace {
 
@@ -81,6 +83,13 @@ int main(int argc, char** argv) {
     body.memo = {1, 2, 3};
     body.payload = yap::tx::Transfer{id, 77};
     const Input tx_seed = yap::ycs::encode(yap::tx::sign_tx(body, key));
+    yap::dev::DevBlock block;
+    block.header.chain_id = "yapchain-testnet-1";
+    block.header.height = 3;
+    block.header.producer_pubkey = key.public_key();
+    block.txs = {tx_seed, {1, 2, 3}};
+    block.signature = yap::dev::sign_header(block.header, key);
+    const Input block_seed = yap::ycs::encode(block);
 
     for (unsigned long i = 0; i < iterations; ++i) {
         const Input a = mutate(ycs_seed, rng);
@@ -89,11 +98,14 @@ int main(int argc, char** argv) {
         yap_fuzz_bech32m(b.data(), b.size());
         const Input c = mutate(tx_seed, rng);
         yap_fuzz_tx(c.data(), c.size());
+        const Input e = mutate(block_seed, rng);
+        yap_fuzz_devblock(e.data(), e.size());
     }
+    yap_fuzz_devblock(block_seed.data(), block_seed.size());
     yap_fuzz_tx(tx_seed.data(), tx_seed.size());
     // Also feed the unmutated seeds (they must round-trip).
     yap_fuzz_ycs(ycs_seed.data(), ycs_seed.size());
     yap_fuzz_bech32m(b32_seed.data(), b32_seed.size());
-    std::printf("fuzz smoke: %lu iterations x 3 targets OK\n", iterations);
+    std::printf("fuzz smoke: %lu iterations x 4 targets OK\n", iterations);
     return 0;
 }

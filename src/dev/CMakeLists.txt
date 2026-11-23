@@ -1,0 +1,5 @@
+add_library(yap_dev STATIC dev_block.cpp dev_chain.cpp)
+add_library(yap::dev ALIAS yap_dev)
+target_include_directories(yap_dev PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(yap_dev PUBLIC yap::chain)
+yap_target_warnings(yap_dev)

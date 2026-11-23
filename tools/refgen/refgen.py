@@ -953,6 +953,37 @@ def gen_blocks():
                                                  scenario_zero_shares(), scenario_long_run())]}
 
 
+# --------------------------------------------------------------------------- dev blocks (§14)
+DEVBLOCK_PREFIX = b"YAPCHAIN/DEVBLOCK/V1\x00"
+
+
+def encode_dev_header(h):
+    return (tx_ref.u(2, h["version"]) + tx_ref.enc_bytes(h["chain_id"].encode()) + tx_ref.u(8, h["height"])
+            + tx_ref.u(8, h["time_ms"]) + h["prev_block_hash"] + h["tx_root"] + h["state_root"]
+            + h["producer_pubkey"])
+
+
+def gen_devblocks():
+    producer = seed(700)
+    txs = [tx_ref.sign_tx(make_body(seed(0), {"type": "burn", "amount": 5}, nonce=i), seed(0)) for i in range(3)]
+    cases = []
+    for name, height, block_txs in [("genesis_child_empty", 1, []), ("three_txs", 7, txs)]:
+        h = {"version": 1, "chain_id": CHAIN_ID, "height": height, "time_ms": 1_767_225_600_000 + height * 2000,
+             "prev_block_hash": hashlib.sha256(b"prev" + bytes([height])).digest(),
+             "tx_root": merkle_ref.rfc6962_root(block_txs),
+             "state_root": hashlib.sha256(b"state" + bytes([height])).digest(),
+             "producer_pubkey": ed.public_key(producer)}
+        header = encode_dev_header(h)
+        sig = ed.sign(producer, DEVBLOCK_PREFIX + header)
+        block = header + tx_ref.u(4, len(block_txs)) + b"".join(tx_ref.enc_bytes(t) for t in block_txs) + sig
+        cases.append({"name": name, "producer_seed": hx(producer), "chain_id": h["chain_id"], "height": str(height),
+                      "time_ms": str(h["time_ms"]), "prev_block_hash": hx(h["prev_block_hash"]),
+                      "state_root": hx(h["state_root"]), "txs": [hx(t) for t in block_txs],
+                      "tx_root": hx(h["tx_root"]), "header_ycs": hx(header), "block_ycs": hx(block),
+                      "block_hash": hx(tagged_hash("YAP/devblock/v1", header)), "signature": hx(sig)})
+    return {"cases": cases}
+
+
 # --------------------------------------------------------------------------- main
 def write(out_dir, name, obj):
     path = os.path.join(out_dir, name)
@@ -980,6 +1011,7 @@ def main():
     write(args.out, "merkle.json", gen_merkle())
     write(args.out, "genesis.json", gen_genesis())
     write(args.out, "blocks.json", gen_blocks())
+    write(args.out, "devblock.json", gen_devblocks())
     return 0
 
 

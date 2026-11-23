@@ -26,8 +26,9 @@ enum class Table : std::uint8_t {
     Smt = 1,      ///< sparse Merkle tree nodes: node hash -> encoded node
     Results = 2,  ///< per-height execution results
     Meta = 3,     ///< store metadata: schema version, chain id, last height and root
+    Blocks = 4,   ///< dev-chain blocks by height (ADR-0025); empty on non-dev nodes
 };
-inline constexpr std::size_t kTableCount = 4;
+inline constexpr std::size_t kTableCount = 5;
 [[nodiscard]] std::string_view table_name(Table t) noexcept;
 
 /// Storage failure (I/O, corruption reported by the engine, ...). Never a transaction error.

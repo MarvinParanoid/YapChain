@@ -43,7 +43,8 @@ public:
 
     /// InitChain: validates `genesis`, writes the initial state atomically, returns app_hash.
     /// Throws std::invalid_argument for an invalid genesis and std::logic_error if initialised.
-    Hash32 init_chain(const Genesis& genesis);
+    /// `extra` operations are written in the same atomic transaction (e.g. dev-chain config).
+    Hash32 init_chain(const Genesis& genesis, const storage::WriteBatch& extra = {});
 
     [[nodiscard]] bool initialized() const noexcept { return meta_.has_value(); }
     /// Info: only durably committed data.
@@ -65,7 +66,14 @@ public:
     state::BlockResult finalize_block(const state::BlockContext& ctx);
 
     /// Commit: one atomic, durable store write for the pending height. Returns the new root.
-    Hash32 commit();
+    /// `extra` operations (e.g. the dev block itself) are written in the same transaction.
+    Hash32 commit(const storage::WriteBatch& extra = {});
+
+    /// Discards a finalized but uncommitted block (e.g. a dev block rejected after execution).
+    void abort_pending() noexcept;
+    [[nodiscard]] bool has_pending() const noexcept { return pending_ != nullptr; }
+    [[nodiscard]] const StoreMeta& meta() const;
+    [[nodiscard]] const storage::KvStore& store() const noexcept { return *store_; }
 
     /// Committed consensus state (Table::State) as a read-only view.
     [[nodiscard]] const state::KvReader& committed() const noexcept { return state_view_; }

@@ -11,6 +11,7 @@ std::string_view table_name(Table t) noexcept {
         case Table::Smt: return "smt";
         case Table::Results: return "results";
         case Table::Meta: return "meta";
+        case Table::Blocks: return "blocks";
     }
     return "unknown";
 }

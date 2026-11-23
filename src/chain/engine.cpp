@@ -98,7 +98,7 @@ state::RootFn Engine::incremental_root(merkle::SmtUpdater& smt) const {
     return [&smt](const state::Overlay& block_state) { return apply_state_changes(smt, block_state); };
 }
 
-Hash32 Engine::init_chain(const Genesis& genesis) {
+Hash32 Engine::init_chain(const Genesis& genesis, const storage::WriteBatch& extra) {
     if (meta_) throw std::logic_error("Engine: already initialised");
     if (auto err = validate_genesis(genesis); !err.empty()) throw std::invalid_argument("invalid genesis: " + err);
 
@@ -115,6 +115,10 @@ Hash32 Engine::init_chain(const Genesis& genesis) {
     append_smt_changes(batch, smt);
     batch.mark("after_smt");
     batch.put(Table::Meta, meta_key(), ycs::encode(meta));
+    for (const auto& op : extra.ops()) {
+        if (op.kind == storage::WriteOp::Kind::Put) batch.put(op.table, op.key, op.value);
+        if (op.kind == storage::WriteOp::Kind::Erase) batch.erase(op.table, op.key);
+    }
     store_->write(batch);  // durable before InitChain returns
     meta_ = meta;
     return root;
@@ -180,7 +184,18 @@ state::BlockResult Engine::finalize_block(const state::BlockContext& ctx) {
     return result;
 }
 
-Hash32 Engine::commit() {
+const StoreMeta& Engine::meta() const {
+    require_initialized();
+    return *meta_;
+}
+
+void Engine::abort_pending() noexcept {
+    pending_.reset();
+    pending_smt_.reset();
+    pending_result_.reset();
+}
+
+Hash32 Engine::commit(const storage::WriteBatch& extra) {
     require_initialized();
     if (!pending_) throw std::logic_error("Engine: commit without finalize_block");
 
@@ -196,6 +211,10 @@ Hash32 Engine::commit() {
     batch.mark("after_smt");
     batch.put(Table::Results, results_key(pending_height_), ycs::encode(record));
     batch.put(Table::Meta, meta_key(), ycs::encode(next));
+    for (const auto& op : extra.ops()) {
+        if (op.kind == storage::WriteOp::Kind::Put) batch.put(op.table, op.key, op.value);
+        if (op.kind == storage::WriteOp::Kind::Erase) batch.erase(op.table, op.key);
+    }
 
     store_->write(batch);  // throws on failure: meta_ and pending_ are left untouched
 
