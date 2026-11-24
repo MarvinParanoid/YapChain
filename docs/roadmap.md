@@ -6,7 +6,8 @@
 |---|---|---|
 | **M0** | Архитектура, протокол, консенсус, экономика, аттестации, модель угроз, ADR; ревизия r2 | завершён |
 | **M1** | Детерминированное ядро без сети и BFT; разбит на M1.1–M1.4 (ниже) | M1.1–M1.4 — завершены; приёмка M1 |
-| **M2** | ABCI++ адаптер, CometBFT localnet 1 → 4 валидатора (docker compose), crash recovery, blocksync | PROPOSED |
+| **M1.5** | Независимый аудит ядра, исправления, выбор CometBFT v0.40.0, чек-лист M2 ([audit-m1.5.md](audit-m1.5.md)) | завершён |
+| **M2** | ABCI++ адаптер, CometBFT v0.40.0 localnet 1 → 4 валидатора (docker compose), crash recovery, blocksync | PROPOSED |
 | **M3** | Аттестации: реестр, каталог, `ClaimAchievement`, лимиты, SDK подписи для эмитентов | PROPOSED |
 | **M4** | Governance multisig 3-of-5: формат, операции реестра, валидаторов, параметров, Treasury | DECIDED (ADR-0013), после M1 |
 | **M5** | Закрытый testnet: 4 валидатора у разных операторов, full nodes, faucet, мониторинг, runbook | PROPOSED |

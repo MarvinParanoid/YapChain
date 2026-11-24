@@ -41,11 +41,11 @@
 
 Ценой этого становится второй runtime (Go-бинарь) в эксплуатации. Это внешний процесс, а не зависимость сборки C++.
 
-**Требует проверки перед M2:**
-- какая ветка актуальна и поддерживается (v0.38.x или v0.39.x; статус v1.x) — выбрать одну и зафиксировать точную версию;
-- формат кадров ABCI socket-протокола в выбранной версии (varint-префикс длины + protobuf);
-- нет ли в v0.39 изменений mempool/ABCI, затрагивающих `CheckTx`/`PrepareProposal`;
-- наличие поддерживаемой C++-реализации ABCI-сервера (предполагается, что её нет, и пишем свою, ~1–2 тыс. строк).
+**Проверено в аудите M1.5 ([ADR-0026](adr/0026-cometbft-version.md), [чек-лист](cometbft-compatibility.md)):**
+- версия: **CometBFT v0.40.0** (запасная v0.38.26); линия v1.x отозвана;
+- кадры ABCI: unsigned varint-префикс длины + protobuf `Request`/`Response` (`tendermint.abci`);
+- новые в v0.40 методы `InsertTx`/`ReapTxs` нужны только для app-mempool; используем стандартный;
+- готовой поддерживаемой C++-реализации ABCI-сервера нет — пишем свою в M2.
 
 ### 3.2 Запасной вариант (PROPOSED)
 1. **Malachite** как встроенная библиотека через тонкий Rust-shim с C ABI за тем же интерфейсом `Application`,
@@ -66,8 +66,8 @@
 | Quorum certificate | `Commit` = набор отдельных подписей precommit от > 2/3 power (без агрегации; при 4 валидаторах это несущественно). Включается в следующий блок как `LastCommit` и передаётся приложению как `decided_last_commit` (`CommitInfo`: по записи на каждого валидатора набора `H−1` с `BlockIDFlag` Absent/Commit/Nil). На высоте 1 пуст. Используется для наград (protocol.md §9.1, §9.5) |
 | Ротация proposer | Взвешенный round-robin CometBFT; при равных весах — по очереди |
 | View change | Раунды: при таймауте propose/prevote/precommit валидаторы переходят в раунд `r+1` с новым proposer'ом; блокировки (locked value) сохраняют safety |
-| Время блока | `time` — по правилам выбранной версии CometBFT (BFT time / PBTS — **уточнить**), детерминировано для всех нод |
-| Пустые блоки и темп | PROPOSED: `create_empty_blocks = true`, интервал между блоками ≈ 2 s, чтобы эмиссия шла предсказуемо (economics.md §4). Проверить перед M2: в выбранной версии интервал задаётся `timeout_commit` (config) или консенсус-параметром (`next_block_delay` в новых ветках) |
+| Время блока | BFT time (v0.40.0, без PBTS): взвешенная медиана меток precommit, Nil/Absent пропускаются; первый блок — время genesis |
+| Пустые блоки и темп | PROPOSED: `create_empty_blocks = true`, `[consensus] timeout_commit ≈ 2 s` в config.toml (в v0.40.0 консенсус-параметра `next_block_delay` нет), чтобы эмиссия шла предсказуемо (economics.md §4) |
 
 ```mermaid
 sequenceDiagram
