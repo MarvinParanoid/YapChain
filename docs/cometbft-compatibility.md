@@ -32,7 +32,7 @@ advisory Tachyon в v0.40.0 исправлен, номера полей `Request
 | `PrepareProposal` | бюджет `max_tx_bytes` считает protobuf-обрамление каждой tx; превышение → паника CometBFT | OK (`proposal_tx_cost`, коммит 7a7cb7c) |
 | `PrepareProposal` | может менять порядок/добавлять/выкидывать tx; не обязан быть детерминированным | OK |
 | `ProcessProposal` | детерминированный, ACCEPT=1 / REJECT=2, UNKNOWN=0 роняет узел; вызывается и на proposer | OK; маппинг — M2.2 |
-| `ProcessProposal` | контекстные ошибки у нас — fail-stop; безопасно, т.к. CometBFT валидирует блок (LastCommit, время) до вызова | CHECK |
+| `ProcessProposal` | контекстные ошибки у нас — fail-stop; безопасно, т.к. CometBFT валидирует блок (LastCommit, время) до вызова | CHECK (нужен второй proposer — M2.4) |
 | Vote extensions | выключены по умолчанию (`abci.vote_extensions_enable_height = 0`); не включать | M2.2 (InitChain отказывает при ≠ 0) |
 | `FinalizeBlock` | `decided_last_commit`: пуст на `initial_height`; иначе по одной записи на каждого валидатора H−1, порядок — по убыванию power *(код)*; Absent присутствуют с флагом 1 | OK (мы сортируем по адресу, §9.5) |
 | `FinalizeBlock` | `len(tx_results) == len(txs)` иначе `ApplyBlock` падает | OK |
@@ -77,7 +77,32 @@ advisory Tachyon в v0.40.0 исправлен, номера полей `Request
 `Info.app_version = 1`; genesis CometBFT обязан содержать `consensus_params.version.app = "1"` (InitChain проверяет):
 CometBFT берёт версию из Info только при высоте 0, а из параметров — при их обновлении (ADR-0028 п. 6).
 
+## Результаты на живом узле (M2.3, 24.11.2026)
+CometBFT v0.40.0 (собран из архива тега, `0.39.0+0880b4d3`) + `yapd`, один валидатор, Linux x86_64, GCC 16 Debug,
+ASan+UBSan и Clang 23 TSan; данные — из `--trace-abci` yapd, лога и RPC CometBFT (`tests/integration/test_live_cometbft.py`).
+
+| Пункт | Наблюдение | Итог |
+|---|---|---|
+| Соединения | 4 socketClient: query, snapshot, mempool, consensus | OK |
+| Порядок старта | `Info` (height 0, hash пуст) → `InitChain` → блоки | OK |
+| `InitChain` | `initial_height=1`, 1 валидатор, `version.app=1`, `vote_extensions_enable_height=0`; все проверки §11.4 пройдены; `app_hash` = root CLI-genesis | OK |
+| `Header(1).AppHash` | = `app_hash` ответа InitChain (поле `app_hash` genesis пусто) | OK |
+| Время | время блока 1 = `genesis_time`; дальше — BFT time, растёт | OK |
+| `decided_last_commit` | высота 1 — пусто; с высоты 2 — 1 голос, flag 2 (COMMIT), адрес и power совпадают с state | OK |
+| `PrepareProposal` | `max_tx_bytes = 55 596 101`; `local_last_commit` с 1 голосом; затем `ProcessProposal` на том же узле | OK |
+| `app_hash` | `Header(H+1).AppHash` = root высоты H для **всех** высот прогона; `/chain` Query = заголовку | OK |
+| `version.app` в заголовках | 1 | OK |
+| CheckTx | ERR_NONCE (10), ERR_DECODE (1), ERR_INSUFFICIENT_FUNDS (11) возвращаются через `broadcast_tx_sync`; точный повтор тех же байт отклоняет **кэш мемпула CometBFT** («tx already exists in cache»), до приложения он не доходит | OK |
+| RECHECK | не наблюдался: после Commit мемпул был пуст; покрыт тестом адаптера | — |
+| Рестарт | `Info` → height/hash последнего Commit; `appHeight = storeHeight = stateHeight`; InitChain не вызывается; первый новый блок несёт тот же `app_hash` | OK |
+| Сбой до Commit (`before_commit:H`) | durable высота H−1; CometBFT: «consensus connection terminated. Did the application crash?», останавливается сам (код 0); после рестарта `appHeight=H−1 storeHeight=H stateHeight=H−1` → «Replay last block using real app» | OK |
+| Сбой после Commit (`after_commit:H`) | durable высота H; после рестарта `appHeight=H storeHeight=H stateHeight=H−1` → «Replay last block using mock app» (повторного исполнения нет) | OK |
+| Двойное применение | по логу yapd каждая высота закоммичена ровно один раз (1..N без пропусков); эмиссия точно `G + 2 YAP × H` | OK |
+
 ## Непроверенное
 - Выйдет ли v0.40.1 до старта M2 (на 24.11.2026 — нет).
 - Дата окончания поддержки семейства 2025.1 (v0.38).
-- Поведение на живом узле: всё, что помечено CHECK, и полный цикл на 4 валидаторах.
+- Поведение с несколькими валидаторами (Absent/Nil в `decided_last_commit`, чужой proposer, `ProcessProposal` чужих
+  предложений, misbehavior) — M2.4.
+- RECHECK на живом узле при непустом мемпуле после Commit.
+- aarch64 и GitHub Actions — не запускались.

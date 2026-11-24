@@ -7,7 +7,7 @@
 | **M0** | Архитектура, протокол, консенсус, экономика, аттестации, модель угроз, ADR; ревизия r2 | завершён |
 | **M1** | Детерминированное ядро без сети и BFT; разбит на M1.1–M1.4 (ниже) | M1.1–M1.4 — завершены; приёмка M1 |
 | **M1.5** | Независимый аудит ядра, исправления, выбор CometBFT v0.40.0, чек-лист M2 ([audit-m1.5.md](audit-m1.5.md)) | завершён |
-| **M2** | ABCI++ адаптер, CometBFT v0.40.0 localnet 1 → 4 валидатора (docker compose), crash recovery, blocksync | PROPOSED |
+| **M2** | ABCI++ адаптер, CometBFT v0.40.0 localnet 1 → 4 валидатора (docker compose), crash recovery, blocksync | M2.0–M2.3 — завершены; M2.4+ — впереди |
 | **M3** | Аттестации: реестр, каталог, `ClaimAchievement`, лимиты, SDK подписи для эмитентов | PROPOSED |
 | **M4** | Governance multisig 3-of-5: формат, операции реестра, валидаторов, параметров, Treasury | DECIDED (ADR-0013), после M1 |
 | **M5** | Закрытый testnet: 4 валидатора у разных операторов, full nodes, faucet, мониторинг, runbook | PROPOSED |
@@ -143,3 +143,20 @@ replay в пустую БД; перезапуски на случайных вы
 2. Инварианты §7.3 после каждого блока.
 3. Fuzz-цели ≥ 10 минут каждая без падений и утечек.
 4. Невалидный dev-блок любого типа отклоняется, state не меняется.
+
+---
+
+## M2 — фаза 1 (M2.0–M2.3)
+
+**Статус:** завершена. Правило M1 «без P2P, BFT, ABCI, RPC» для M2 снято: P2P, BFT и RPC даёт CometBFT
+(ADR-0002, ADR-0009); собственных реализаций нет.
+
+| Шаг | Содержание | Документы |
+|---|---|---|
+| M2.0 | Перепроверка CometBFT v0.40.0 (теги, advisories, proto), получение из проверенных исходников | ADR-0027 |
+| M2.1 | `yap_abci`: protobuf-биндинги официальным `protoc` из proto тега, varint-кадры, Unix socket `0600`, 4+ соединения | ADR-0027, чек-лист |
+| M2.2 | `yap_abci_app`: адаптер над `Engine`, один мьютекс, залипающий fail-stop, идемпотентный InitChain, Query | ADR-0028 |
+| M2.3 | `yapd`, localnet из одного валидатора, живой E2E (17 шагов) и восстановление после SIGKILL до/после Commit | [scripts/localnet](../scripts/localnet/README.md) |
+
+**Не входит** (M2.4+ и позже): сеть из нескольких валидаторов, docker compose, blocksync/state sync, изменения набора
+валидаторов, governance, `ClaimAchievement`, explorer, веб-кошелёк, публичный testnet.

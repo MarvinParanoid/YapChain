@@ -28,9 +28,13 @@ YapChain — open-source блокчейн мемной экосистемы с �
   проверка и восстановление состояния, replay, crash-тесты с SIGKILL.
 - **M1.4 Dev-chain и CLI** — реализован: зашифрованный keystore, транзакции, подписанные dev-блоки,
   локальная dev-цепочка, запросы и проверка состояния через `yap`.
-- M2 (CometBFT, сеть) — впереди, см. [docs/roadmap.md](docs/roadmap.md).
+- **M2.0–M2.3 CometBFT** — реализованы: CometBFT v0.40.0 из проверенных исходников, ABCI++ транспорт
+  (protobuf, Unix socket), адаптер над детерминированным ядром, демон `yapd`, локальная сеть из **одного**
+  валидатора с настоящим CometBFT и живой E2E-тест с восстановлением после сбоев.
+- M2.4+ (несколько валидаторов, docker compose) — впереди, см. [docs/roadmap.md](docs/roadmap.md).
 
-Сети и консенсуса пока нет: dev-цепочка — локальный инструмент разработки с одним производителем блоков.
+BFT-сети пока нет: localnet из одного валидатора ([scripts/localnet](scripts/localnet/README.md)) проверяет протокол
+ABCI++, но не выдерживает отказов; dev-цепочка — локальный инструмент разработки с одним производителем блоков.
 
 ## Быстрый старт (локальная dev-цепочка)
 
@@ -54,12 +58,16 @@ yap dev export --out journal.hex           # журнал для replay на д�
 ## Сборка и тесты
 
 Требования: Linux x86_64 или aarch64, CMake ≥ 3.25, Ninja, make, GCC ≥ 13 или Clang ≥ 17, Python 3 (для векторов).
-Зависимости (libsodium 1.0.22, Catch2 3.16.1, nlohmann/json 3.12.0) скачиваются CMake и проверяются по SHA-256.
+Зависимости (libsodium 1.0.22, Catch2 3.16.1, nlohmann/json 3.12.0, LMDB 0.9.36, CLI11 2.7.2, а для ABCI —
+abseil 20260817.0 и protobuf v36.2) скачиваются CMake и проверяются по SHA-256 (офлайн: `-DYAP_DEPS_DIR=<каталог>`).
+protobuf и abseil собираются при первой конфигурации каждого каталога сборки (около 1,5 мин); без ABCI —
+`-DYAP_WITH_ABCI=OFF`. Для `yapd` с CometBFT нужен Go ≥ 1.25 (см. [scripts/localnet](scripts/localnet/README.md)).
 
 ```sh
 cmake --preset debug   && cmake --build --preset debug   && ctest --preset debug
 cmake --preset asan    && cmake --build --preset asan    && ctest --preset asan     # ASan + UBSan
 cmake --preset release && cmake --build --preset release && ctest --preset release
+CC=clang CXX=clang++ cmake --preset tsan -B build/clang-tsan && cmake --build build/clang-tsan   # ThreadSanitizer
 python3 -I tools/refgen/refgen.py --out test-vectors    # перегенерировать эталонные векторы
 ```
 

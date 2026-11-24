@@ -73,6 +73,16 @@ if(YAP_BUILD_TESTS)
     target_link_libraries(yap_abci_fuzz_smoke PRIVATE yap::abci)
     yap_target_warnings(yap_abci_fuzz_smoke)
     add_test(NAME fuzz_smoke_abci COMMAND yap_abci_fuzz_smoke 100000)
+
+    # Live test with a real CometBFT v0.40.0 (built from the verified source archive by
+    # scripts/localnet/localnet.py build-cometbft). Registered only when the binary is given.
+    set(YAP_COMETBFT_BIN "" CACHE FILEPATH "CometBFT v0.40.0 binary for the live integration test")
+    if(YAP_COMETBFT_BIN)
+      add_test(NAME integration:live_cometbft
+        COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_cometbft.py
+                $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN})
+      set_tests_properties(integration:live_cometbft PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+    endif()
   endif()
 
   # Crash-recovery tests fork child processes that are killed with SIGKILL.
