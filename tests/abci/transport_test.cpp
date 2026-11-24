@@ -195,6 +195,57 @@ TEST_CASE("server: malformed input closes only that connection", "[abci][server]
     server.stop();
 }
 
+TEST_CASE("server: large garbage, deep nesting and a stalled partial frame stay within bounds", "[abci][server][limits]") {
+    Fixture fx;
+    abci::Server server(fx.opts(), fx.handler);  // max_message_bytes = 1 MiB
+    server.start();
+    const auto path = fx.opts().socket_path.string();
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // A stalled partial frame holds only its own connection: nothing is allocated for the declared
+    // length and other connections are served meanwhile.
+    test::AbciClient stalled(path);
+    {
+        std::string fr;
+        abci::append_uvarint(fr, 1 << 20);  // exactly the limit, never completed
+        stalled.send_raw(fr + std::string(1000, 'x'));
+    }
+    {
+        // A full-size frame of garbage: rejected by the protobuf parser, connection closed.
+        test::AbciClient bad(path);
+        std::string fr;
+        abci::append_uvarint(fr, 1 << 20);
+        bad.send_raw(fr + std::string(1 << 20, '\xff'));
+        const auto r = bad.receive();
+        REQUIRE(r.has_value());
+        CHECK(r->has_exception());
+        CHECK_FALSE(bad.receive().has_value());
+    }
+    {
+        // 200 000 nested unknown groups (wire type 3): the parser's recursion limit rejects it without
+        // exhausting the stack (a crash here would take the whole process down).
+        test::AbciClient bad(path);
+        std::string body;
+        constexpr int kDepth = 200'000;
+        body.reserve(kDepth * 4);
+        for (int i = 0; i < kDepth; ++i) body += "\xfb\x7f";  // field 2047, START_GROUP (varint 16379)
+        std::string fr;
+        abci::append_uvarint(fr, body.size());
+        bad.send_raw(fr + body);
+        const auto r = bad.receive();
+        REQUIRE(r.has_value());
+        CHECK(r->has_exception());
+    }
+    test::AbciClient ok(path);
+    CHECK(ok.call(echo("served")).echo().message() == "served");
+    CHECK(fx.handler.calls.load() == 0);  // nothing malformed reached the application
+    CHECK(fx.fatal.load() == 0);
+    // Generous bound (sanitizer builds): the point is that nothing waits for the stalled frame.
+    CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(30));
+    stalled.close();
+    server.stop();  // returns although a connection was idle in the middle of a frame
+}
+
 TEST_CASE("server: a failing handler yields ResponseException and on_fatal", "[abci][server]") {
     Fixture fx;
     abci::Server server(fx.opts(), fx.handler);

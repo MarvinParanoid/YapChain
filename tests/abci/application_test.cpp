@@ -711,3 +711,166 @@ TEST_CASE("app: NIL and ABSENT in decided_last_commit — exact CometBFT message
     CHECK(balance(crypto::system_account_id(crypto::kTreasuryAccountName)) == 1'400'000 + 200'000);
     CHECK(balance(crypto::system_account_id(crypto::kRewardsPoolAccountName)) == 2 * 600'000);
 }
+
+// ------------------------------------------------------------------ M2.4f: proposal safety and misbehavior
+
+namespace {
+
+Bytes signed_tx(const crypto::SecretKey& from, const std::string& chain_id, std::uint64_t nonce, std::uint64_t fee,
+                std::uint64_t expires, tx::TxPayload payload) {
+    tx::TxBody b;
+    b.chain_id = chain_id;
+    b.sender_pubkey = from.public_key();
+    b.nonce = nonce;
+    b.fee = fee;
+    b.expires_at_height = expires;
+    b.payload = std::move(payload);
+    return ycs::encode(tx::sign_tx(b, from));
+}
+
+ta::Request with_misbehavior(ta::Request r, const chain::Genesis& g) {
+    auto add = [&](auto* p) {
+        auto* m1 = p->add_misbehavior();
+        m1->set_type(ta::DUPLICATE_VOTE);
+        m1->mutable_validator()->set_address(str(addr_of(g.validators[1])));
+        m1->mutable_validator()->set_power(static_cast<std::int64_t>(g.validators[1].power));
+        m1->set_height(1);
+        set_time(m1->mutable_time(), g.genesis_time_ms);
+        m1->set_total_voting_power(40);
+        auto* m2 = p->add_misbehavior();
+        m2->set_type(ta::LIGHT_CLIENT_ATTACK);
+        m2->mutable_validator()->set_address(str(addr_of(g.validators[2])));
+        m2->mutable_validator()->set_power(static_cast<std::int64_t>(g.validators[2].power));
+        m2->set_height(1);
+        set_time(m2->mutable_time(), g.genesis_time_ms);
+        m2->set_total_voting_power(40);
+    };
+    if (r.has_finalize_block()) add(r.mutable_finalize_block());
+    if (r.has_process_proposal()) add(r.mutable_process_proposal());
+    return r;
+}
+
+}  // namespace
+
+TEST_CASE("app: ProcessProposal rejects every invalid proposer-controlled transaction and stays healthy",
+          "[abci][app][safety]") {
+    // CometBFT v0.40.0 runs ValidateBlock (header, LastCommit signatures, proposer, time, evidence)
+    // before ProcessProposal (consensus/state.go defaultDoPrevote). What a Byzantine proposer still
+    // controls is the transaction list: every invalid transaction must give REJECT, never fail-stop.
+    const auto net = small_net();
+    auto n = node_at_height_1(net);
+    const auto& alice = net.users[0];
+    const auto bob = test::id_of(net.users[1]);
+    const auto good = test::transfer_tx(alice, bob, 5'000, 0);
+    Bytes bad_sig = good;
+    bad_sig.back() ^= 0x01;
+    const std::vector<std::pair<const char*, Bytes>> invalid = {
+        {"garbage", Bytes{0xde, 0xad, 0xbe, 0xef}},
+        {"empty", Bytes{}},
+        {"bad signature", bad_sig},
+        {"other chain", signed_tx(alice, "yapchain-other-1", 0, 1'000, 100, tx::Transfer{bob, 1})},
+        {"duplicate in the block", good},
+        {"nonce gap", test::transfer_tx(alice, bob, 1, 5)},
+        {"expired", signed_tx(alice, test::kTestChain, 0, 1'000, 1, tx::Transfer{bob, 1})},
+        {"ttl too long", signed_tx(alice, test::kTestChain, 0, 1'000, 10'000, tx::Transfer{bob, 1})},
+        {"fee below min_fee", test::transfer_tx(alice, bob, 1, 0, 1)},
+        {"insufficient funds", test::transfer_tx(alice, bob, 1'000'000'000, 0)},
+        {"zero burn", test::burn_tx(alice, 0, 0)},
+        {"oversized", Bytes(5'000, 0x01)},
+    };
+    const auto root = n.engine->info().last_state_root;
+    for (const auto& [name, bad] : invalid) {
+        INFO(name);
+        const std::vector<Bytes> txs = std::string(name) == "duplicate in the block" ? std::vector<Bytes>{good, good}
+                                                                                     : std::vector<Bytes>{good, bad};
+        const auto resp = n.call(process_req(net.genesis, 2, txs)).process_proposal();
+        CHECK(resp.status() == ta::ResponseProcessProposal::REJECT);
+        CHECK_FALSE(n.app->failure().has_value());
+        CHECK(n.engine->info().last_height == 1);
+        CHECK(n.engine->info().last_state_root == root);
+        CHECK_FALSE(n.engine->has_pending());
+    }
+    // A Byzantine proposer may leave honest signatures out of LastCommit (CometBFT only needs +2/3):
+    // valid input, ACCEPT; the omitted validator simply earns nothing for that height (ADR-0015).
+    auto partial = process_req(net.genesis, 2, {good});
+    partial.mutable_process_proposal()->mutable_proposed_last_commit()->mutable_votes(3)->set_block_id_flag(
+        tendermint::types::BLOCK_ID_FLAG_ABSENT);
+    CHECK(n.call(partial).process_proposal().status() == ta::ResponseProcessProposal::ACCEPT);
+    // CheckTx state is not touched by ProcessProposal; the honest path continues normally.
+    CHECK(n.call(check_req(good)).check_tx().code() == 0);
+    CHECK(n.call(process_req(net.genesis, 2, {good})).process_proposal().status() == ta::ResponseProcessProposal::ACCEPT);
+    const auto fin = n.call(finalize_req(net.genesis, 2, {good})).finalize_block();
+    REQUIRE(fin.tx_results_size() == 1);
+    CHECK(fin.tx_results(0).code() == 0);
+    n.call(simple(ta::Request::kCommit));
+    CHECK(n.engine->info().last_height == 2);
+    CHECK_FALSE(n.app->failure().has_value());
+}
+
+TEST_CASE("app: ProcessProposal fails stop on inconsistencies CometBFT has already excluded", "[abci][app][safety]") {
+    // Height, LastCommit membership/powers and time are validated by CometBFT before ProcessProposal.
+    // If they are still wrong, the local node diverged (or CometBFT is broken): fail-stop, not REJECT.
+    const auto net = small_net();
+    using Mutate = std::function<void(ta::RequestProcessProposal&)>;
+    const std::vector<std::pair<const char*, Mutate>> cases = {
+        {"height skips", [](auto& r) { r.set_height(3); }},
+        {"unknown signer", [](auto& r) { r.mutable_proposed_last_commit()->mutable_votes(0)->mutable_validator()->set_address(std::string(20, 'q')); }},
+        {"power differs", [](auto& r) { r.mutable_proposed_last_commit()->mutable_votes(0)->mutable_validator()->set_power(11); }},
+        {"time before the last block", [](auto& r) { r.mutable_time()->set_seconds(r.time().seconds() - 100); }},
+    };
+    for (const auto& [name, mutate] : cases) {
+        INFO(name);
+        auto n = node_at_height_1(net);
+        auto req = process_req(net.genesis, 2, {});
+        mutate(*req.mutable_process_proposal());
+        CHECK_THROWS(n.call(req));
+        CHECK(n.app->failure().has_value());
+        CHECK(n.engine->info().last_height == 1);
+    }
+}
+
+TEST_CASE("app: misbehavior is reported as events only — no balance, power or validator-set change",
+          "[abci][app][misbehavior]") {
+    // Slashing and governance do not exist yet (M2.4 scope): evidence must not change the state.
+    const auto net = small_net();
+    auto with = node_at_height_1(net);
+    auto without = node_at_height_1(net);
+    const auto& alice = net.users[0];
+    const auto t = test::transfer_tx(alice, test::id_of(net.users[1]), 5'000, 0);
+
+    CHECK(with.call(with_misbehavior(process_req(net.genesis, 2, {t}), net.genesis)).process_proposal().status() ==
+          ta::ResponseProcessProposal::ACCEPT);
+    const auto f1 = with.call(with_misbehavior(finalize_req(net.genesis, 2, {t}), net.genesis)).finalize_block();
+    const auto f2 = without.call(finalize_req(net.genesis, 2, {t})).finalize_block();
+    CHECK(f1.app_hash() == f2.app_hash());  // identical state: balances, validators, powers
+    CHECK(f1.validator_updates_size() == 0);
+    CHECK_FALSE(f1.has_consensus_param_updates());
+    int reported = 0;
+    for (const auto& e : f1.events()) {
+        if (e.type() != "validator_misbehavior") continue;
+        ++reported;
+        std::map<std::string, std::string> a;
+        for (const auto& kv : e.attributes()) a[kv.key()] = kv.value();
+        CHECK(a["height"] == "1");
+        CHECK((a["validator"] == to_hex(addr_of(net.genesis.validators[1])) ||
+               a["validator"] == to_hex(addr_of(net.genesis.validators[2]))));
+    }
+    CHECK(reported == 2);
+    for (const auto& e : f2.events()) CHECK(e.type() != "validator_misbehavior");
+    with.call(simple(ta::Request::kCommit));
+    without.call(simple(ta::Request::kCommit));
+    CHECK(with.engine->info().last_state_root == without.engine->info().last_state_root);
+    // The reported validators keep earning: height 3 with everyone signing pays all four equally.
+    const auto f3 = with.call(finalize_req(net.genesis, 3, {})).finalize_block();
+    int rewards = 0;
+    for (const auto& e : f3.events()) rewards += e.type() == "validator_reward" ? 1 : 0;
+    CHECK(rewards == 4);
+
+    SECTION("malformed evidence from CometBFT is an inconsistency: fail-stop") {
+        auto n = node_at_height_1(net);
+        auto req = with_misbehavior(finalize_req(net.genesis, 2, {}), net.genesis);
+        req.mutable_finalize_block()->mutable_misbehavior(0)->mutable_validator()->set_address("short");
+        CHECK_THROWS(n.call(req));
+        CHECK(n.app->failure().has_value());
+    }
+}

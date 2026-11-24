@@ -59,6 +59,16 @@ CometBFT v0.40.0 открывает к приложению четыре сое�
     (`YAPD_TEST_CRASH`) компилируются только в `yapd-test-hooks` (`-DYAPD_TEST_HOOKS`, цель собирается лишь при
     `YAP_BUILD_TESTS`). В `yapd` их кода нет и переменная игнорируется; тест `node:no_test_hooks_in_yapd` проверяет
     это по содержимому бинарника и по поведению.
+14. **ProcessProposal: REJECT против fail-stop** (M2.4, сверено с v0.40.0 `consensus/state.go` `defaultDoPrevote`).
+    До ProcessProposal CometBFT выполняет `ValidateBlock` (`state/validation.go`): высота, заголовок, подписи
+    LastCommit (+2/3 набора H−1), proposer — член набора, время (больше предыдущего; BFT/PBTS), evidence. Byzantine
+    proposer контролирует только список транзакций, выбор подписей сверх +2/3 и время в этих пределах. Поэтому:
+    любая невалидная транзакция предложения → `REJECT` (приложение продолжает работу); пропущенные подписи —
+    допустимый вход (`ACCEPT`, пропущенный валидатор не получает награду за эту высоту); несогласованность в полях,
+    которые CometBFT уже проверил (высота, неизвестный подписант, power, время назад, некорректный misbehavior),
+    означает расхождение локального состояния или ошибку CometBFT → fail-stop. Каждый REJECT пишется в лог.
+15. **Misbehavior** до появления slashing/governance — только события `validator_misbehavior`: ни балансы, ни power,
+    ни набор валидаторов не меняются (`validator_updates` пуст), state root совпадает с блоком без evidence.
 
 ## Последствия
 - Пропускная способность ограничена одним мьютексом: Query/CheckTx ждут FinalizeBlock. Для testnet достаточно;
