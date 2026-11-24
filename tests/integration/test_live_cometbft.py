@@ -7,7 +7,10 @@ CometBFT RPC; no library code is called. Expected amounts are computed here from
 (protocol.md §9.3, §9.5; economics.md §8), system-account addresses from the independent Python
 reference (tools/refgen).
 
-    test_live_cometbft.py <yap> <yapd> <cometbft>
+    test_live_cometbft.py <yap> <yapd> <cometbft> <yapd-test-hooks>
+
+The crash scenarios run the separate test build yapd-test-hooks (the only binary that honours
+YAPD_TEST_CRASH); every other start, including the recovery after each crash, uses yapd.
 
 Scenario (numbered steps are printed):
   1-17  start, InitChain, blocks, Transfer through RPC, balances/emission/fees, app_hash vs state
@@ -67,15 +70,16 @@ POOL = system_address(b"rewards-pool")
 
 
 class Net:
-    def __init__(self, d, yap, yapd, cometbft):
+    def __init__(self, d, yap, yapd, cometbft, yapd_hooks):
         self.d, self.yap, self.yapd, self.cometbft = d, yap, yapd, cometbft
+        self.yapd_hooks = yapd_hooks
         self.meta = None
         self.procs = {}
 
     # ---- processes
     def start(self, crash=None, wait=2):
         env = {"YAPD_TEST_CRASH": crash} if crash else {}
-        self.procs["yapd"] = ln.start_yapd(self.d, self.yapd, env)
+        self.procs["yapd"] = ln.start_yapd(self.d, self.yapd_hooks if crash else self.yapd, env)
         self.procs["cometbft"] = ln.start_cometbft(self.d, self.cometbft)
         if wait:
             return ln.wait_height(self.d, wait, timeout=60)
@@ -240,10 +244,10 @@ def crash_scenario(net, label, point, burned, alice_out, bob_in, nonce):
     step(label, f"recovered: '{replay}', chain continued to height {h}, {n} app_hashes match, no height twice")
 
 
-def main(yap, yapd, cometbft):
+def main(yap, yapd, cometbft, yapd_hooks):
     base = os.environ.get("YAP_LIVE_DIR") or tempfile.mkdtemp(prefix="yapnet-")
     d = os.path.join(base, "net")
-    net = Net(d, yap, yapd, cometbft)
+    net = Net(d, yap, yapd, cometbft, yapd_hooks)
     ok = False
     try:
         net.meta = ln.init(d, yap, cometbft)
@@ -407,7 +411,7 @@ def main(yap, yapd, cometbft):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         print(__doc__, file=sys.stderr)
         sys.exit(2)
     sys.exit(main(*[os.path.abspath(p) for p in sys.argv[1:]]))

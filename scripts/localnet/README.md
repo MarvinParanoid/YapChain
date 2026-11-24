@@ -51,8 +51,10 @@ python3 -I scripts/localnet/localnet.py stop --dir /tmp/yapnet
 ## yapd
 `yapd --home <dir> [--socket <path>] [--trace-abci]`: база — `<home>/data` (LMDB, эксклюзивная блокировка записи;
 база dev-цепочки отклоняется). Коды выхода: 0 — остановлен сигналом, 1 — командная строка, 2 — fail-stop во время
-работы, 3 — не удалось запуститься. Переменная `YAPD_TEST_CRASH=before_commit:H|after_commit:H` — только для
-тестов восстановления: процесс убивает себя SIGKILL до или после durable-записи высоты `H`.
+работы, 3 — не удалось запуститься. Обычный `yapd` не содержит тестовых хуков. Для тестов восстановления
+собирается отдельный бинарник `yapd-test-hooks` (только вместе с тестами, `YAP_BUILD_TESTS`): с переменной
+`YAPD_TEST_CRASH=before_commit:H|after_commit:H` он убивает себя SIGKILL до или после durable-записи высоты `H`
+и при старте пишет в лог предупреждение «TEST BUILD». В рабочей среде его не используют.
 
 ## Четыре валидатора (M2.4)
 ```sh
@@ -98,5 +100,11 @@ validator key и node key, свои логи и свой reward-счёт. Общ
 консенсуса — это не blocksync.
 
 ## Живой E2E-тест
-`tests/integration/test_live_cometbft.py <yap> <yapd> <cometbft>` — 17 шагов и два сценария сбоя; в CTest
-регистрируется как `integration:live_cometbft`, если при конфигурации задан `-DYAP_COMETBFT_BIN=<путь>`.
+`tests/integration/test_live_cometbft.py <yap> <yapd> <cometbft> <yapd-test-hooks>` — 17 шагов и два сценария
+сбоя (сбой — через `yapd-test-hooks`, восстановление — обычным `yapd`); в CTest — `integration:live_cometbft`.
+
+`tests/integration/test_live_multival.py <yap> <yapd> <cometbft>` — четыре валидатора: консенсус и детерминизм,
+распределённые транзакции и живой RECHECK, награды по реальным голосам (COMMIT/ABSENT/NIL), остановка валидатора и
+его догон через blocksync, verify-state всех четырёх баз; в CTest — `integration:live_multival`.
+
+Оба теста регистрируются, если при конфигурации задан `-DYAP_COMETBFT_BIN=<путь>`.

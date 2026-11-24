@@ -73,6 +73,10 @@ if(YAP_BUILD_TESTS)
     target_link_libraries(yap_abci_fuzz_smoke PRIVATE yap::abci)
     yap_target_warnings(yap_abci_fuzz_smoke)
     add_test(NAME fuzz_smoke_abci COMMAND yap_abci_fuzz_smoke 100000)
+    # The production yapd has no crash hooks; only yapd-test-hooks does (M2.4f).
+    add_test(NAME node:no_test_hooks_in_yapd
+      COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/node/test_yapd_hooks.py
+              $<TARGET_FILE:yapd> $<TARGET_FILE:yapd_test_hooks>)
 
     # Live test with a real CometBFT v0.40.0 (built from the verified source archive by
     # scripts/localnet/localnet.py build-cometbft). Registered only when the binary is given.
@@ -80,7 +84,7 @@ if(YAP_BUILD_TESTS)
     if(YAP_COMETBFT_BIN)
       add_test(NAME integration:live_cometbft
         COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_cometbft.py
-                $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN})
+                $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN} $<TARGET_FILE:yapd_test_hooks>)
       set_tests_properties(integration:live_cometbft PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
       # Four independent validators (M2.4): consensus, distributed transactions, rewards, blocksync.
       add_test(NAME integration:live_multival

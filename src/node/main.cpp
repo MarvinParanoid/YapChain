@@ -7,9 +7,12 @@
 // Exit codes: 0 — stopped by SIGINT/SIGTERM; 1 — command line; 2 — fail-stop while running (the state
 // at the last durable Commit is intact); 3 — cannot start (storage, lock, socket, corrupt store).
 //
-// YAPD_TEST_CRASH (testing only): "before_commit:H" or "after_commit:H" kills the process with SIGKILL
-// when Commit of height H arrives (before the durable write), or after the write but before the
-// response is sent. Used by the live crash-recovery tests; it never changes what is written.
+// Test hooks exist only in the separate test executable yapd-test-hooks (compiled with
+// YAPD_TEST_HOOKS, built with the tests, never installed). The yapd binary contains no hook code and
+// ignores the variable below.
+// YAPD_TEST_CRASH (yapd-test-hooks only): "before_commit:H" or "after_commit:H" kills the process with
+// SIGKILL when Commit of height H arrives (before the durable write), or after the write but before
+// the response is sent. Used by the live crash-recovery tests; it never changes what is written.
 #include <CLI11.hpp>
 
 #include <atomic>
@@ -51,6 +54,7 @@ void log_line(const std::string& msg) {
     std::cerr << buf << '.' << (ms < 100 ? (ms < 10 ? "00" : "0") : "") << ms << "Z yapd: " << msg << std::endl;
 }
 
+#ifdef YAPD_TEST_HOOKS
 /// Test-only crash points (see the header comment). Tracks the height of the last FinalizeBlock
 /// itself, so it never touches the engine outside the application's lock.
 class CrashHook final : public yap::abci::Handler {
@@ -92,6 +96,7 @@ std::optional<std::pair<std::string, std::int64_t>> crash_point_from_env() {
     if (used != s.size() - colon - 1 || h < 1) throw std::invalid_argument("YAPD_TEST_CRASH height must be >= 1");
     return std::make_pair(point, static_cast<std::int64_t>(h));
 }
+#endif  // YAPD_TEST_HOOKS
 
 std::filesystem::path default_home() {
     if (const char* h = std::getenv("YAPD_HOME"); h != nullptr && *h != '\0') return h;
@@ -125,7 +130,11 @@ int main(int argc, char** argv) {
         return rc == 0 ? 0 : kExitUsage;
     }
     if (version) {
-        std::cout << "yapd " << YAP_VERSION << " (ABCI app_version " << yap::abci::kAppVersion << ", CometBFT v0.40.0)\n";
+        std::cout << "yapd " << YAP_VERSION << " (ABCI app_version " << yap::abci::kAppVersion << ", CometBFT v0.40.0)"
+#ifdef YAPD_TEST_HOOKS
+                  << " [TEST BUILD: crash hooks]"
+#endif
+                  << "\n";
         return 0;
     }
 
@@ -139,6 +148,7 @@ int main(int argc, char** argv) {
     sigaddset(&sigs, SIGTERM);
     pthread_sigmask(SIG_BLOCK, &sigs, nullptr);
 
+#ifdef YAPD_TEST_HOOKS
     std::optional<std::pair<std::string, std::int64_t>> crash;
     try {
         crash = crash_point_from_env();
@@ -146,11 +156,14 @@ int main(int argc, char** argv) {
         log_line(std::string("invalid YAPD_TEST_CRASH: ") + e.what());
         return kExitUsage;
     }
+#endif
 
     std::unique_ptr<yap::storage::LmdbStore> store;
     std::unique_ptr<yap::chain::Engine> engine;
     std::unique_ptr<yap::abci::Application> application;
+#ifdef YAPD_TEST_HOOKS
     std::unique_ptr<CrashHook> hook;
+#endif
     std::unique_ptr<yap::abci::Server> server;
     std::atomic<bool> fatal{false};
     try {
@@ -165,11 +178,14 @@ int main(int argc, char** argv) {
         ao.trace = trace;
         application = std::make_unique<yap::abci::Application>(*engine, ao);  // refuses dev-chain stores
         yap::abci::Handler* handler = application.get();
+#ifdef YAPD_TEST_HOOKS
+        log_line("TEST BUILD with crash hooks: not for production use");
         if (crash) {
             hook = std::make_unique<CrashHook>(*application, crash->first, crash->second);
             handler = hook.get();
             log_line("YAPD_TEST_CRASH armed: " + crash->first + ":" + std::to_string(crash->second));
         }
+#endif
         yap::abci::ServerOptions so;
         so.socket_path = socket_path;
         so.max_connections = max_connections;
