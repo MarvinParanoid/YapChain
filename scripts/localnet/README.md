@@ -115,7 +115,12 @@ $L fault --dir build/disk-tmp/f4 '{"cmd": "flap", "period_s": 5, "down_s": 1}'  
 $L fault --dir build/disk-tmp/f4 '{"cmd": "reset", "probability": 0.3}'                # сброс TCP-соединений
 $L fault --dir build/disk-tmp/f4 '{"cmd": "status"}'                                   # связи, байты, задержка
 $L add-node --dir build/disk-tmp/f4 --cometbft …     # full node без права голоса (не в наборе валидаторов)
+$L start --dir build/disk-tmp/f4 --node 4 --yapd … --cometbft …
 ```
+Full node (`add-node`, M2.5): свои ключи (validator key не входит ни в какой набор), тот же `genesis.json` побайтно,
+**пустые** базы CometBFT и `yapd`, валидаторы — persistent peers (через прокси, если он есть). Синхронизируется от
+genesis через blocksync, обслуживает RPC и Query, ретранслирует транзакции, не голосует и не получает наград.
+State sync не используется.
 Потеря отдельных пакетов **не моделируется**: для неё нужен tc/netem (root, модуль ядра); сброс TCP-соединения —
 это другой отказ. Прокси и тестовые хуки — только тестовые инструменты; в `yapd` их нет.
 

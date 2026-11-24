@@ -702,12 +702,104 @@ def scenario_crash(net, model, args):
          f"signing states only moved forward: {guard.last}")
 
 
+# ------------------------------------------------------------------ scenario: non-validator full node (M2.5f)
+
+def blocksync_evidence(node, ymark, cmark, lo):
+    """Heights lo..switch-1 arrived through CometBFT blocksync: the switch record and FinalizeBlock without
+    ProcessProposal in the node's yapd log. Returns the switch height."""
+    clog, ylog = node.log("cometbft", since=cmark), node.log(since=ymark)
+    sw = re.search(r"Time to switch to consensus mode!\s+module=blocksync height=(\d+)", clog)
+    check(sw, f"{node} did not switch from blocksync to consensus")
+    switch = int(sw.group(1))
+    fin = {int(x) for x in re.findall(r"ABCI FinalizeBlock height=(\d+)", ylog)}
+    pp = {int(x) for x in re.findall(r"ABCI ProcessProposal height=(\d+)", ylog)}
+    span = set(range(lo, switch))
+    check(span <= fin and not (span & pp), f"{node}: blocksync heights {lo}..{switch - 1} not decided blocks")
+    return switch
+
+
+def scenario_fullnode(net, model, args):
+    v = net.validators
+    step("F1", "four validators produce blocks")
+    for n in v:
+        n.start()
+    net.wait_height(20, v, timeout=120)
+
+    step("F2-F3", "a fifth node: not in the validator set, empty databases, the same genesis bytes")
+    fn = net.add_full_node()
+    gen = hashlib.sha256(open(os.path.join(fn.meta["cometbft_home"], "config", "genesis.json"), "rb").read())
+    check(gen.hexdigest() == net.info["genesis_sha256"], "full node genesis differs")
+    check(not os.listdir(fn.meta["yapd_home"]), "full node application database is not empty")
+    cdata = os.listdir(os.path.join(fn.meta["cometbft_home"], "data"))
+    check(cdata == ["priv_validator_state.json"], f"full node consensus data is not empty: {cdata}")
+    vals = {x["address"].upper() for x in v[0].rpc("validators", height=net.min_height(v))["validators"]}
+    check(fn.address not in vals and len(vals) == N, "full node in the validator set")
+
+    step("F4-F6", "it connects through P2P and synchronizes from genesis through blocksync")
+    tip0 = net.min_height(v)
+    fn.start()
+    wait_until(lambda: peer_ids(fn) == ids_of(v), 60, "full node peers = the four validators")
+    wait_until(lambda: fn.height() >= tip0 and not fn.rpc("status")["sync_info"]["catching_up"], 180,
+               "full node to catch up")
+    check("InitChain: genesis " + net.info["genesis_hash"] in fn.log(), "full node did not InitChain from genesis")
+    switch = blocksync_evidence(fn, 0, 0, 1)
+    check(switch - 1 >= tip0 - 2, f"blocksync covered only 1..{switch - 1} of {tip0}")
+    tip = net.wait_height(net.min_height(v) + 2, net.nodes)
+    check_same_chain(net, net.nodes, tip - 1)
+    roots = {n.i: n.roots() for n in net.nodes}
+    for h in range(1, tip):
+        check(len({roots[i][h] for i in roots}) == 1, f"state root of {h} differs (full node)")
+    note(f"full node: InitChain from genesis, heights 1..{switch - 1} via blocksync, consensus from {switch}; "
+         f"block hashes and roots equal to the validators' at 1..{tip - 1}")
+
+    step("F7", "Query on the full node matches the model")
+    check_node_state(net, model, fn, all_accounts(net))
+
+    step("F8", "a transfer through the full node's RPC reaches the validators and is executed")
+    ymarks = {n.i: n.log_size() for n in v}
+    h, code = send_transfer(net, model, fn, "alice", "dave", 3_000_000)
+    check(code == 0, f"CheckTx on the full node: {code}")
+    height = net.wait_included(h)
+    seen = [n.i for n in v if any(x == h for t, x, _, _ in checktx_log(n, ymarks[n.i]) if t == "NEW")]
+    check(seen, "no validator received the full node's transaction")
+    note(f"included at height {height}; received by P2P on validators {seen}")
+
+    step("F9", "the full node never votes and earns nothing")
+    tip = net.wait_height(net.min_height(net.nodes) + 1, net.nodes)
+    model.extend(tip, v[0])
+    check(all(fn.address not in model.flags[x] for x in range(2, tip + 1)), "full node in a last commit")
+    check(signing_state(fn)[0] == 0, f"full node signed something: {signing_state(fn)}")
+    check_rewards(net, model, v[0], 1, tip)
+    note(f"its validator address appears in no last commit (1..{tip}); priv_validator_state never advanced; "
+         f"rewards exact (validators only)")
+
+    step("F10", "stopping the full node does not affect the quorum")
+    check(fn.stop() == {"cometbft": 0, "yapd": 0}, "full node exit codes")
+    stopped = fn.commits()[-1][0]
+    net.wait_height(stopped + 12, v, timeout=120)
+
+    step("F11", "restarted, it catches up again through blocksync")
+    ymark, cmark = fn.log_size(), fn.log_size("cometbft")
+    fn.start()
+    wait_until(lambda: fn.height() >= net.min_height(v) and not fn.rpc("status")["sync_info"]["catching_up"],
+               180, "full node to catch up after restart")
+    switch = blocksync_evidence(fn, ymark, cmark, stopped + 1)
+    check(switch - 1 - stopped >= 10, f"only {switch - 1 - stopped} blocks via blocksync after the restart")
+    tip = net.wait_height(net.min_height(net.nodes) + 2, net.nodes)
+    check_same_chain(net, net.nodes, tip - 1)
+    check_no_conflicts(net, net.nodes)
+    for n in net.nodes:
+        check_node_state(net, model, n, all_accounts(net))
+    note(f"stopped at {stopped}; heights {stopped + 1}..{switch - 1} via blocksync; all five agree up to {tip - 1}")
+
+
 SCENARIOS = {
     "infra": scenario_infra,
     "quorum": scenario_quorum,
     "partition": scenario_partition,
     "latency": scenario_latency,
     "crash": scenario_crash,
+    "fullnode": scenario_fullnode,
 }
 
 
