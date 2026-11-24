@@ -61,9 +61,10 @@ if(YAP_BUILD_TESTS)
   add_test(NAME cli:tx COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_tx_cli.py $<TARGET_FILE:yap>)
 
   if(YAP_WITH_ABCI)
-    add_executable(yap_abci_tests abci/transport_test.cpp)
+    add_executable(yap_abci_tests abci/transport_test.cpp abci/application_test.cpp)
     target_include_directories(yap_abci_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/abci)
-    target_link_libraries(yap_abci_tests PRIVATE yap_test_support yap::abci Catch2::Catch2WithMain)
+    target_link_libraries(yap_abci_tests PRIVATE yap_test_support yap::abci yap::abci_app nlohmann_json::nlohmann_json
+      Catch2::Catch2WithMain)
     target_compile_definitions(yap_abci_tests PRIVATE YAP_PROTO_DIR="${PROJECT_SOURCE_DIR}/third_party/cometbft-proto")
     yap_target_warnings(yap_abci_tests)
     catch_discover_tests(yap_abci_tests TEST_PREFIX "abci:")
