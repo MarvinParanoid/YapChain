@@ -165,22 +165,30 @@ CheckResult Engine::check_tx(ByteView tx_bytes) {
     return {r.code, std::move(r.log)};
 }
 
+std::uint64_t proposal_tx_cost(std::size_t tx_size) noexcept {
+    std::uint64_t varint = 1;
+    for (std::uint64_t v = tx_size; v >= 0x80; v >>= 7) ++varint;
+    return 1 + varint + tx_size;
+}
+
 std::vector<Bytes> Engine::prepare_proposal(const state::BlockContext& ctx, const std::vector<Bytes>& candidates,
                                             std::uint64_t max_bytes, std::vector<tx::TxCode>* codes) const {
     require_fresh();
     state::Overlay scratch(&state_view_);
     std::vector<Bytes> out;
     std::uint64_t used = 0;
+    if (ctx.height != meta_->last_height + 1) throw FailStop("prepare_proposal: height is not last_height + 1");
     if (codes != nullptr) codes->clear();
     for (const auto& tx : candidates) {
-        if (tx.size() > max_bytes - used) {  // used <= max_bytes always holds
+        const std::uint64_t cost = proposal_tx_cost(tx.size());
+        if (cost > max_bytes - used) {  // used <= max_bytes always holds
             if (codes != nullptr) codes->push_back(tx::TxCode::ErrTooLarge);
             continue;
         }
         const auto code = state::execute_tx(scratch, tx, ctx.height, meta_->chain_id).code;
         if (codes != nullptr) codes->push_back(code);
         if (code != tx::TxCode::Ok) continue;
-        used += tx.size();
+        used += cost;
         out.push_back(tx);
     }
     return out;

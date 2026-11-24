@@ -22,6 +22,9 @@
 
 namespace yap::chain {
 
+/// Bytes a transaction occupies in a CometBFT block's Data (field tag + varint length + payload).
+[[nodiscard]] std::uint64_t proposal_tx_cost(std::size_t tx_size) noexcept;
+
 struct Info {
     std::string chain_id;
     std::uint64_t last_height = 0;
@@ -56,6 +59,8 @@ public:
 
     /// PrepareProposal: keeps, in order, the candidates that execute with OK on a scratch copy of the
     /// state and fit into `max_bytes` in total (protocol.md §10). `ctx.txs` is ignored.
+    /// The byte budget is counted like CometBFT's Txs.Validate: every transaction costs its protobuf
+    /// framing inside Data{txs}, i.e. 1 + varint(len) + len bytes (see proposal_tx_cost).
     /// If `codes` is given it receives, per candidate, the code of its sequential execution
     /// (or ErrTooLarge if it did not fit the byte budget).
     [[nodiscard]] std::vector<Bytes> prepare_proposal(const state::BlockContext& ctx, const std::vector<Bytes>& candidates,

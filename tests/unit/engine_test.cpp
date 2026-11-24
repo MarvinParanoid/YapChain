@@ -111,8 +111,18 @@ TEST_CASE("prepare_proposal keeps valid txs in order within the byte budget", "[
     const auto t2 = transfer_tx(kAlice, id_of(kBob), 1, 2);
     const auto c = ctx(g, 1, {});
     CHECK(e.prepare_proposal(c, {t0, dup, t1, gap, t2}, 1'000'000) == std::vector<Bytes>{t0, t1, t2});
-    CHECK(e.prepare_proposal(c, {t0, t1, t2}, t0.size() + t1.size()) == std::vector<Bytes>{t0, t1});
-    CHECK(e.prepare_proposal(c, {t0}, t0.size() - 1).empty());
+    // The budget counts CometBFT's protobuf framing per transaction (audit M1.5).
+    const auto cost = [](const Bytes& t) { return chain::proposal_tx_cost(t.size()); };
+    CHECK(e.prepare_proposal(c, {t0, t1, t2}, cost(t0) + cost(t1)) == std::vector<Bytes>{t0, t1});
+    CHECK(e.prepare_proposal(c, {t0, t1}, cost(t0) + cost(t1) - 1) == std::vector<Bytes>{t0});
+    CHECK(e.prepare_proposal(c, {t0}, t0.size() + 1).empty());  // raw size fits, framed size does not
+    CHECK(chain::proposal_tx_cost(0) == 2);
+    CHECK(chain::proposal_tx_cost(127) == 129);
+    CHECK(chain::proposal_tx_cost(128) == 131);
+    CHECK(chain::proposal_tx_cost(16384) == 16388);
+    auto wrong_height = c;
+    wrong_height.height = 5;
+    CHECK_THROWS_AS((void)e.prepare_proposal(wrong_height, {t0}, 1'000'000), FailStop);
     auto prepared = c;
     prepared.txs = e.prepare_proposal(c, {t0, dup, t1, gap, t2}, 1'000'000);
     CHECK(e.process_proposal(prepared));
