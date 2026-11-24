@@ -7,7 +7,9 @@
 // batch is visible or none is. Keys and values are arbitrary bytes (keys are non-empty).
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
@@ -122,7 +124,21 @@ public:
     [[nodiscard]] std::unique_ptr<KvStore> snapshot() const override;
 
 private:
-    std::map<Bytes, Bytes> tables_[kTableCount];
+    // Same order as std::less<Bytes> (unsigned lexicographic, as in LMDB), but via an explicit
+    // memcmp: GCC 14 at -O3 reports a false -Wstringop-overread inside the inlined
+    // std::lexicographical_compare_three_way of std::vector<unsigned char>. Transparent, so
+    // lookups by ByteView need no copy.
+    struct KeyLess {
+        using is_transparent = void;
+        bool operator()(ByteView a, ByteView b) const noexcept {
+            const std::size_t n = std::min(a.size(), b.size());
+            if (n != 0) {
+                if (const int c = std::memcmp(a.data(), b.data(), n); c != 0) return c < 0;
+            }
+            return a.size() < b.size();
+        }
+    };
+    std::map<Bytes, Bytes, KeyLess> tables_[kTableCount];
     bool read_only_ = false;
 };
 

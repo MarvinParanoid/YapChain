@@ -15,11 +15,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `arch` must be a real axis: with only `include` entries the second one overwrites the
+        # first in every combination and x86_64 never runs.
+        arch: [x86_64, aarch64]
+        compiler: [gcc, clang]
+        preset: [debug, release, asan]
         include:
           - { arch: x86_64,  runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
-        compiler: [gcc, clang]
-        preset: [debug, release, asan]
     steps:
       - uses: actions/checkout@v4
 

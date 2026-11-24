@@ -50,7 +50,7 @@ void fault_point(std::string_view point) {
 
 std::optional<Bytes> MemoryStore::get(Table t, ByteView key) const {
     const auto& m = tables_[static_cast<std::size_t>(t)];
-    auto it = m.find(Bytes(key.begin(), key.end()));
+    auto it = m.find(key);
     if (it == m.end()) return std::nullopt;
     return it->second;
 }
