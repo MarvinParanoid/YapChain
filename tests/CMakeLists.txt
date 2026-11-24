@@ -92,13 +92,20 @@ if(YAP_BUILD_TESTS)
                 $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN})
       set_tests_properties(integration:live_multival PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
       # Fault tolerance of the four-validator network through the netfault P2P proxy (M2.5).
-      set(YAP_FAULT_SCENARIOS infra quorum partition latency)
+      set(YAP_FAULT_SCENARIOS infra quorum partition latency crash)
       foreach(scenario IN LISTS YAP_FAULT_SCENARIOS)
         add_test(NAME integration:fault_${scenario}
           COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_faults.py ${scenario}
                   $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN} $<TARGET_FILE:yapd_test_hooks>)
         set_tests_properties(integration:fault_${scenario} PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE LABELS "live;fault")
       endforeach()
+      # The crash scenario again on a real filesystem with fsync (/tmp is tmpfs here).
+      set(YAP_LIVE_DISK_DIR "/var/tmp" CACHE PATH "Directory on a real (non-tmpfs) filesystem for the disk crash test")
+      add_test(NAME integration:fault_crash_disk
+        COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_faults.py crash
+                $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN} $<TARGET_FILE:yapd_test_hooks>)
+      set_tests_properties(integration:fault_crash_disk PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE LABELS "live;fault"
+        ENVIRONMENT "YAP_LIVE_PARENT=${YAP_LIVE_DISK_DIR}")
     endif()
   endif()
 

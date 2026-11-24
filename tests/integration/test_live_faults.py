@@ -9,7 +9,8 @@ its time (<dir>/net/faults.log, <dir>/net/events.log). Values are compared stric
 
     test_live_faults.py <scenario> <yap> <yapd> <cometbft> [<yapd-test-hooks>]
 
-Environment: YAP_LIVE_DIR (base directory), YAP_LIVE_KEEP=1 (keep it after success).
+Environment: YAP_LIVE_DIR (base directory), YAP_LIVE_PARENT (parent of a fresh base directory, e.g. a real
+filesystem instead of the tmpfs /tmp), YAP_LIVE_KEEP=1 (keep it after success).
 """
 import os
 import shutil
@@ -524,19 +525,198 @@ def scenario_latency(net, model, args):
     print("LATENCY METRICS " + json.dumps(results), flush=True)
 
 
+def fs_type(path):
+    """Filesystem type of `path` from /proc/self/mounts (longest mount-point prefix)."""
+    best, kind = "", "unknown"
+    path = os.path.realpath(path)
+    with open("/proc/self/mounts") as f:
+        for line in f:
+            parts = line.split()
+            mnt, typ = parts[1].replace("\\040", " "), parts[2]
+            if (path == mnt or path.startswith(mnt.rstrip("/") + "/")) and len(mnt) > len(best):
+                best, kind = mnt, typ
+    return kind
+
+
+# ------------------------------------------------------------------ scenario: distributed crash recovery (M2.5e)
+
+def signing_state(n):
+    """CometBFT's last-signed (height, round, step) of this validator (priv_validator_state.json)."""
+    p = os.path.join(n.meta["cometbft_home"], "data", "priv_validator_state.json")
+    with open(p) as f:
+        s = json.load(f)
+    return int(s["height"]), int(s["round"]), int(s["step"])
+
+
+def key_digest(n):
+    with open(os.path.join(n.meta["cometbft_home"], "config", "priv_validator_key.json"), "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+class SigningGuard:
+    """Records each validator's signing state and key; after every restart the state must not go
+    backwards (never reset) and the key must be the node's own, unchanged and unique."""
+
+    def __init__(self, net):
+        self.net = net
+        self.keys = {n.i: key_digest(n) for n in net.validators}
+        check(len(set(self.keys.values())) == N, "validator keys are not distinct")
+        self.last = {n.i: signing_state(n) for n in net.validators}
+
+    def check(self):
+        for n in self.net.validators:
+            s = signing_state(n)
+            check(s >= self.last[n.i], f"{n}: signing state went back from {self.last[n.i]} to {s}")
+            check(key_digest(n) == self.keys[n.i], f"{n}: validator key changed")
+            self.last[n.i] = s
+
+
+def crash_with_hook(net, node, point, guard):
+    """Restarts node's yapd as yapd-test-hooks armed to SIGKILL itself at `point` of a height ahead,
+    then checks the durable height and recovery through the normal handshake."""
+    check(net.hooks, "yapd-test-hooks binary not given")
+    node.stop()
+    committed = node.commits()[-1][0]
+    others = [n for n in net.validators if n is not node and n.running()]
+    target = max(committed, net.min_height(others)) + 3
+    net.event(f"{node}: restart with YAPD_TEST_CRASH={point}:{target}")
+    node.start_yapd(net.hooks, {"YAPD_TEST_CRASH": f"{point}:{target}"})
+    cmark = node.log_size("cometbft")
+    node.start_cometbft()
+    rc = node.reap("yapd", timeout=180)
+    check(rc == -signal.SIGKILL, f"{node}: yapd-test-hooks should die by SIGKILL, status {rc}")
+    try:
+        crc = node.reap("cometbft", timeout=30)
+        note(f"{node}: CometBFT stopped by itself after the application died (status {crc})")
+    except Fail:
+        node.kill("cometbft", signal.SIGTERM)
+    durable = node.commits()[-1][0]
+    want = target - 1 if point == "before_commit" else target
+    check(durable == want, f"{node}: durable height {durable} after {point}:{target}, expected {want}")
+    guard.check()
+    cmark = node.log_size("cometbft")
+    node.start()
+    net.wait_height(net.min_height(others) + 2, net.up(), timeout=180)
+    clog = node.log("cometbft", since=cmark)
+    replay = re.search(r"Replay last block using (real|mock) app", clog)
+    check("Completed ABCI Handshake" in clog, f"{node}: no handshake after the crash")
+    guard.check()
+    return target, durable, replay.group(1) if replay else "none (blocks via blocksync/consensus)"
+
+
+def scenario_crash(net, model, args):
+    v = net.validators
+    v0, v1, v2, v3 = v
+    for n in v:
+        n.start()
+    net.wait_height(5)
+    guard = SigningGuard(net)
+    send = lambda node, s, t, a: send_transfer(net, model, node, s, t, a)  # noqa: E731
+
+    step("X1", "SIGKILL of validator-1's application before the durable Commit (yapd-test-hooks)")
+    target, durable, replay = crash_with_hook(net, v1, "before_commit", guard)
+    note(f"killed at Commit of {target}; durable {durable}; recovery: replay with {replay} app")
+
+    step("X2", "SIGKILL of validator-2's application after the durable Commit, before the answer")
+    target, durable, replay = crash_with_hook(net, v2, "after_commit", guard)
+    note(f"killed after Commit of {target}; durable {durable}; recovery: replay with {replay} app")
+
+    step("X3", "SIGKILL of validator-3's CometBFT only; yapd keeps running; restart CometBFT")
+    h, c = send(v0, "alice", "bob", 1_111_111)
+    rc = v3.kill("cometbft")
+    check(rc == -signal.SIGKILL and v3.alive("yapd"), f"cometbft status {rc}")
+    net.wait_height(net.min_height([v0, v1, v2]) + 2, [v0, v1, v2])
+    guard.check()
+    cmark = v3.log_size("cometbft")
+    v3.start_cometbft()
+    net.wait_height(net.min_height([v0, v1, v2]) + 2, v, timeout=180)
+    check("Completed ABCI Handshake" in v3.log("cometbft", since=cmark), "validator-3 handshake")
+    net.wait_included(h)
+    guard.check()
+
+    step("X4", "stop only validator-0's yapd while its CometBFT runs")
+    ymark = v0.log_size()
+    rc = v0.kill("yapd", signal.SIGTERM)
+    check(rc == 0, f"yapd SIGTERM status {rc}")
+    try:
+        crc = v0.reap("cometbft", timeout=60)
+        cnote = f"CometBFT exited by itself (status {crc})"
+    except Fail:
+        v0.kill("cometbft", signal.SIGTERM)
+        cnote = "CometBFT kept running and was stopped"
+    net.wait_height(net.min_height([v1, v2, v3]) + 2, [v1, v2, v3])
+    v0.start()
+    net.wait_height(net.min_height([v1, v2, v3]) + 2, v, timeout=180)
+    guard.check()
+    note(f"application stopped cleanly; {cnote}; restarted, caught up")
+
+    step("X5", "simultaneous SIGKILL of two nodes (CometBFT and yapd of validators 1 and 2): no quorum, then back")
+    for n in (v1, v2):
+        n.kill("cometbft")
+        n.kill("yapd")
+    stall = frozen(net, [v0, v3], 12)
+    h2, c2 = send(v0, "carol", "dave", 2_222_222)
+    check(c2 == 0, "CheckTx during the outage")
+    for n in (v1, v2):
+        n.start()
+    net.wait_height(max(stall.values()) + 3, v, timeout=240)
+    net.wait_included(h2, timeout=120)
+    guard.check()
+
+    step("X6", "sequential crashes of different validators (SIGKILL validator-0, recover, then validator-3)")
+    for n in (v0, v3):
+        n.kill("cometbft")
+        n.kill("yapd")
+        rest = [m for m in v if m is not n]
+        net.wait_height(net.min_height(rest) + 2, rest)
+        n.start()
+        net.wait_height(net.min_height(rest) + 2, v, timeout=180)
+        guard.check()
+
+    step("X7", "repeated restarts of one lagging node: validator-2 down, killed again during catch-up, twice")
+    v2.stop()
+    rest = [v0, v1, v3]
+    net.wait_height(net.min_height(rest) + 8, rest, timeout=180)
+    for k in range(2):
+        v2.start()
+        wait_until(lambda: v2.height() > 0, 60, "validator-2 RPC")
+        v2.kill("cometbft")
+        v2.kill("yapd")
+        guard.check()
+        net.wait_height(net.min_height(rest) + 3, rest, timeout=180)
+    v2.start()
+    wait_until(lambda: v2.height() >= net.min_height(rest), 240, "validator-2 to catch up")
+    guard.check()
+
+    step("X8", "every application height applied exactly once on every node; no reward twice; same roots")
+    tip = net.wait_height(net.min_height(v) + 2, v, timeout=180)
+    for n in v:
+        hs = sorted(n.roots())              # raises if any height was committed twice
+        check(hs == list(range(1, len(hs) + 1)), f"{n}: committed heights skip: {hs[:3]}…{hs[-3:]}")
+    check_same_chain(net, v, tip - 1)
+    check_no_conflicts(net, v)
+    check_all_state(net, model, v)
+    for n in v:
+        check_rewards(net, model, n, 1, tip - 1)
+    note(f"heights 1..{tip - 1}: every node committed each height once, identical roots; rewards exact; "
+         f"signing states only moved forward: {guard.last}")
+
+
 SCENARIOS = {
     "infra": scenario_infra,
     "quorum": scenario_quorum,
     "partition": scenario_partition,
     "latency": scenario_latency,
+    "crash": scenario_crash,
 }
 
 
 def main(scenario, yap, yapd, cometbft, hooks=None):
-    base = os.environ.get("YAP_LIVE_DIR") or tempfile.mkdtemp(prefix="yf-")
+    base = os.environ.get("YAP_LIVE_DIR") or tempfile.mkdtemp(prefix="yf-", dir=os.environ.get("YAP_LIVE_PARENT"))
     d = os.path.join(base, "net")
     net = None
     ok = False
+    print(f"scenario {scenario}; data in {base} on {fs_type(base)}", flush=True)
     try:
         net = Net(d, yap, yapd, cometbft, fault_proxy=True)
         net.hooks = hooks
