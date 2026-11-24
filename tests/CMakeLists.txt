@@ -106,6 +106,12 @@ if(YAP_BUILD_TESTS)
                 $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN} $<TARGET_FILE:yapd_test_hooks>)
       set_tests_properties(integration:fault_crash_disk PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE LABELS "live;fault"
         ENVIRONMENT "YAP_LIVE_PARENT=${YAP_LIVE_DISK_DIR}")
+      # Distributed soak (M2.5g): >= 1000 blocks, >= 10 000 executed transactions, random faults, fixed
+      # seed. Too long for the regular suite: runs only with `ctest -C soak -R integration:soak`.
+      add_test(NAME integration:soak CONFIGURATIONS soak
+        COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_soak.py
+                $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN})
+      set_tests_properties(integration:soak PROPERTIES TIMEOUT 18000 RUN_SERIAL TRUE LABELS "live;soak")
     endif()
   endif()
 
