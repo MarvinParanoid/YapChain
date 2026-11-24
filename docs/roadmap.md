@@ -7,7 +7,7 @@
 | **M0** | Архитектура, протокол, консенсус, экономика, аттестации, модель угроз, ADR; ревизия r2 | завершён |
 | **M1** | Детерминированное ядро без сети и BFT; разбит на M1.1–M1.4 (ниже) | M1.1–M1.4 — завершены; приёмка M1 |
 | **M1.5** | Независимый аудит ядра, исправления, выбор CometBFT v0.40.0, чек-лист M2 ([audit-m1.5.md](audit-m1.5.md)) | завершён |
-| **M2** | ABCI++ адаптер, CometBFT v0.40.0 localnet 1 → 4 валидатора (docker compose), crash recovery, blocksync | M2.0–M2.3 — завершены; M2.4+ — впереди |
+| **M2** | ABCI++ адаптер, CometBFT v0.40.0 localnet 1 → 4 валидатора, crash recovery, blocksync | M2.0–M2.4 — завершены; M2.5+ — впереди |
 | **M3** | Аттестации: реестр, каталог, `ClaimAchievement`, лимиты, SDK подписи для эмитентов | PROPOSED |
 | **M4** | Governance multisig 3-of-5: формат, операции реестра, валидаторов, параметров, Treasury | DECIDED (ADR-0013), после M1 |
 | **M5** | Закрытый testnet: 4 валидатора у разных операторов, full nodes, faucet, мониторинг, runbook | PROPOSED |
@@ -160,3 +160,19 @@ replay в пустую БД; перезапуски на случайных вы
 
 **Не входит** (M2.4+ и позже): сеть из нескольких валидаторов, docker compose, blocksync/state sync, изменения набора
 валидаторов, governance, `ClaimAchievement`, explorer, веб-кошелёк, публичный testnet.
+
+## M2 — M2.4: сеть из четырёх валидаторов
+
+**Статус:** завершена (результаты — [cometbft-compatibility.md](cometbft-compatibility.md#результаты-сети-из-четырёх-валидаторов-m24-24112026)).
+
+| Шаг | Содержание |
+|---|---|
+| M2.4a | `localnet.py init --validators 4`: независимые CometBFT + `yapd` + LMDB + сокет + порты + ключи, общий побайтно одинаковый genesis, остановка/запуск отдельной ноды |
+| M2.4b | живой тест: InitChain, P2P, ≥ 30 блоков, каждый — proposer, ProcessProposal чужих предложений, одинаковые хеши/roots/результаты по высотам, supply-инварианты |
+| M2.4c | транзакции через RPC разных нод, конфликты nonce, конкурирующие траты, живой RECHECK |
+| M2.4d | награды по реальным COMMIT/ABSENT/NIL до yip; остановка валидатора |
+| M2.4e | догон отставшей ноды через blocksync (≥ 20 блоков), verify-state всех баз |
+| M2.4f | ProcessProposal: REJECT vs fail-stop; misbehavior — только события; crash-хуки — только в `yapd-test-hooks`; лимиты кадров |
+
+**Не входит:** разделение сети, потеря двух валидаторов, Byzantine fault injection, state sync, динамический набор
+валидаторов, governance, slashing, `ClaimAchievement`, explorer, веб-кошелёк, Docker, публичный testnet.

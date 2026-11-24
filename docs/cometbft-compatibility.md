@@ -28,11 +28,11 @@ advisory Tachyon в v0.40.0 исправлен, номера полей `Request
 | `InitChain.app_hash` | непустой ответ заменяет app_hash состояния и становится `Header.AppHash` блока 1; поле `app_hash` в genesis CometBFT оставить **пустым** *(код)* | OK (protocol.md §11.4, r5) |
 | `InitChain.validators` | вернуть пустой список (принять набор из genesis) | M2.2 |
 | Крах после `InitChain` до первого `Commit` | приложение должно снова сообщать высоту 0 | OK (`init_chain` атомарен) |
-| `CheckTx` | NEW / RECHECK; мемпул использует только `code` и `gas_wanted`; recheck после каждого Commit | OK (check-state сбрасывается на commit) |
+| `CheckTx` | NEW / RECHECK; мемпул использует только `code` и `gas_wanted`; recheck после каждого Commit | OK (check-state сбрасывается на commit); RECHECK под `mempool.Lock` до любого нового CheckTx *(код)*; живой RECHECK — M2.4 |
 | `PrepareProposal` | бюджет `max_tx_bytes` считает protobuf-обрамление каждой tx; превышение → паника CometBFT | OK (`proposal_tx_cost`, коммит 7a7cb7c) |
 | `PrepareProposal` | может менять порядок/добавлять/выкидывать tx; не обязан быть детерминированным | OK |
 | `ProcessProposal` | детерминированный, ACCEPT=1 / REJECT=2, UNKNOWN=0 роняет узел; вызывается и на proposer | OK; маппинг — M2.2 |
-| `ProcessProposal` | контекстные ошибки у нас — fail-stop; безопасно, т.к. CometBFT валидирует блок (LastCommit, время) до вызова | CHECK (нужен второй proposer — M2.4) |
+| `ProcessProposal` | контекстные ошибки у нас — fail-stop; безопасно, т.к. CometBFT валидирует блок (LastCommit, время) до вызова | M2.4: порядок `ValidateBlock` → `ProcessProposal` сверен с `consensus/state.go`; невалидные tx → REJECT (12 видов), живые чужие предложения — ACCEPT (ADR-0028 п. 14) |
 | Vote extensions | выключены по умолчанию (`abci.vote_extensions_enable_height = 0`); не включать | M2.2 (InitChain отказывает при ≠ 0) |
 | `FinalizeBlock` | `decided_last_commit`: пуст на `initial_height`; иначе по одной записи на каждого валидатора H−1, порядок — по убыванию power *(код)*; Absent присутствуют с флагом 1 | OK (мы сортируем по адресу, §9.5) |
 | `FinalizeBlock` | `len(tx_results) == len(txs)` иначе `ApplyBlock` падает | OK |
@@ -99,10 +99,36 @@ ASan+UBSan и Clang 23 TSan; данные — из `--trace-abci` yapd, лога
 | Сбой после Commit (`after_commit:H`) | durable высота H; после рестарта `appHeight=H storeHeight=H stateHeight=H−1` → «Replay last block using mock app» (повторного исполнения нет) | OK |
 | Двойное применение | по логу yapd каждая высота закоммичена ровно один раз (1..N без пропусков); эмиссия точно `G + 2 YAP × H` | OK |
 
+## Результаты сети из четырёх валидаторов (M2.4, 24.11.2026)
+Четыре независимых валидатора: у каждого свой процесс CometBFT v0.40.0 и свой `yapd` со своей LMDB, сокетом, портами,
+validator key, node key и reward-счётом; P2P только через CometBFT на 127.0.0.1, state sync выключен, mempool `flood`.
+Linux x86_64; GCC 16 Debug и ASan+UBSan, Clang 23 TSan; 5 отдельных прогонов Debug с новыми ключами
+(`tests/integration/test_live_multival.py`). Значения сравниваются строго по высоте.
+
+| Пункт | Наблюдение | Итог |
+|---|---|---|
+| Genesis | один `genesis.json`, побайтно одинаковый у всех нод; InitChain на всех четырёх, одинаковые `genesis_hash` и `app_hash` | OK |
+| P2P | у каждой ноды 3 пира (persistent peers, `allow_duplicate_ip`, без PEX) | OK |
+| Proposer | за высоты 1..30 каждый из 4 валидаторов предлагал 7–8 блоков (round-robin при равной power) | OK |
+| `ProcessProposal` | вызывается на каждой ноде для каждого блока, включая свои; ~23 из 31 — предложения **других** валидаторов; все ACCEPT | OK |
+| Детерминизм | block hash, `Header.AppHash`, `block_results` и state root совпадают на всех 4 нодах на каждой общей высоте; `Header(H+1).AppHash` = root(H) каждой ноды | OK |
+| Транзакции через RPC разных нод | Transfer/Burn через валидаторы 0–3; распространение по P2P (CheckTx NEW того же хеша на других нодах); одинаковые высота и код на всех нодах | OK |
+| Одни байты на 3 ноды | приняты или отклонены кэшем CometBFT, исполнены один раз; повтор после включения отклоняется кэшем | OK |
+| Конфликт одного nonce | обе ноды приняли свою tx (0/0); исполнена ровно одна (в прогонах выигрывали обе стороны), проигравшая удалена из всех мемпулов | OK |
+| RECHECK | живой RECHECK на всех нодах (3–12 за прогон); валидные tx — код 0; проигравшая конфликт — код 0 до Commit победителя и ERR_NONCE (10) после, затем удаляется; зависших tx нет | OK |
+| `decided_last_commit` | у приложения — те же адреса, power 10 и флаги, что в LastCommit блока (подписи сопоставляются с набором H−1 по индексу: у ABSENT адрес пуст) | OK |
+| Награды | 300 000 yip каждому из 4 подписантов, 400 000 — из 3; пул 600 000, казна 200 000 + остаток; высота 1 — доля валидаторов в казну; совпадает до yip на всех нодах | OK |
+| ABSENT | после остановки validator-3 — ABSENT в каждом следующем LastCommit; награды ему нет; трое продолжают производить блоки | OK |
+| NIL | наблюдается вживую (3–7 раз за прогон): валидатор получает +2/3 precommit раньше +2/3 prevote и по правилам CometBFT голосует precommit nil (`no +2/3 prevotes during enterPrecommit`; debug-лог консенсуса). Награды за эту высоту нет | OK (см. риски) |
+| Blocksync | validator-3 стоит ≥ 20 блоков, затем стартует со своими данными: handshake на высоте остановки, 21–23 блока применены через blocksync (FinalizeBlock без ProcessProposal), затем `Time to switch to consensus mode!` | OK |
+| После догона | те же хеши и roots, баланс/nonce/supply точные, снова голосует COMMIT, предлагает блок, обрабатывает чужие предложения; каждая высота закоммичена один раз | OK |
+| verify-state | после корректной остановки — у всех четырёх баз; root совпадает с root той же высоты у других нод | OK |
+| Секреты | пароль кошелька и приватные ключи (validator, node) не встречаются ни в одном логе (trace включён) | OK |
+
 ## Непроверенное
 - Выйдет ли v0.40.1 до старта M2 (на 24.11.2026 — нет).
 - Дата окончания поддержки семейства 2025.1 (v0.38).
-- Поведение с несколькими валидаторами (Absent/Nil в `decided_last_commit`, чужой proposer, `ProcessProposal` чужих
-  предложений, misbehavior) — M2.4.
-- RECHECK на живом узле при непустом мемпуле после Commit.
+- Misbehavior на живой сети: Byzantine-поведение не воспроизводилось (вне scope M2.4); обработка поля покрыта тестами
+  адаптера (ADR-0028 п. 15).
+- Разделение сети, потеря двух валидаторов, state sync, изменение набора валидаторов — последующие этапы.
 - aarch64 и GitHub Actions — не запускались.
