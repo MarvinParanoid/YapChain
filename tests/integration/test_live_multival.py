@@ -200,6 +200,43 @@ class Net:
             raise Fail(f"{' '.join(cmd)} -> {r.returncode}\n{r.stdout}{r.stderr}")
         return r
 
+    # ---- transactions (built and signed by the real CLI)
+    def make_tx(self, kind, sender, nonce, amount, to=None, expires=None, fee=FEE, node=None):
+        self.tx_counter = getattr(self, "tx_counter", 0) + 1
+        out = os.path.join(self.d, f"tx-{self.tx_counter}.hex")
+        expires = expires if expires is not None else (node or self.up()[0]).height() + 100
+        args = ["tx", kind, "--from", sender, "--amount", str(amount), "--fee", str(fee), "--nonce", str(nonce),
+                "--expires", str(expires), "--chain-id", self.info["chain_id"], "--out", out, "--yes"]
+        if kind == "transfer":
+            args += ["--to", self.addresses[to]]
+        self.cli(*args)
+        tx_hex = open(out).read().strip()
+        return tx_hex, hashlib.sha256(bytes.fromhex(tx_hex)).hexdigest().upper()
+
+    def find_tx(self, h, nodes=None):
+        """{node index: (height, code)} for every node that has the transaction in a block."""
+        out = {}
+        for n in nodes or self.up():
+            try:
+                r = n.rpc("tx", hash="0x" + h)
+                out[n.i] = (int(r["height"]), int(r["tx_result"].get("code", 0)))
+            except ln.LocalnetError:
+                pass
+        return out
+
+    def wait_included(self, h, timeout=60):
+        """Waits until every running node has the transaction in a block; same height and code everywhere."""
+        nodes = self.up()
+        found = wait_until(lambda: (lambda f: f if len(f) == len(nodes) else None)(self.find_tx(h, nodes)),
+                           timeout, f"transaction {h[:16]}… on every node")
+        check(len(set(found.values())) == 1, f"transaction {h[:16]}…: nodes disagree {found}")
+        height, code = next(iter(found.values()))
+        check(code == 0, f"transaction {h[:16]}… included with code {code}")
+        return height
+
+    def mempools_empty(self):
+        return all(int(n.rpc("num_unconfirmed_txs")["n_txs"]) == 0 for n in self.up())
+
     def stop_all(self):
         codes = {}
         for n in self.nodes:  # every CometBFT first, so no CometBFT sees its application vanish
@@ -377,6 +414,33 @@ def check_no_secrets(net):
     return checked
 
 
+def checktx_log(node, since=0):
+    """[(type, tx hash, result code, last committed height)] of every CheckTx this node's yapd handled.
+    Trace lines come in pairs under the application lock; a RECHECK follows the Commit it belongs to."""
+    out = []
+    committed = 0
+    for m in re.finditer(r"Commit: height (\d+),|ABCI CheckTx type=(NEW|RECHECK) bytes=\d+ hash=([0-9a-f]{64})\n"
+                         r"[^\n]*ABCI CheckTx result code=(\d+)", node.log(since=since)):
+        if m.group(1):
+            committed = int(m.group(1))
+        else:
+            out.append((m.group(2), m.group(3).upper(), int(m.group(4)), committed))
+    return out
+
+
+def broadcast_result(node, tx_hex):
+    """CheckTx code from broadcast_tx_sync, or 'cache' when CometBFT's mempool cache refused the bytes."""
+    try:
+        return int(node.broadcast(tx_hex)["code"])
+    except ln.LocalnetError as e:
+        check("tx already exists in cache" in str(e), f"{node}: broadcast failed: {e}")
+        return "cache"
+
+
+def nonce_of(node, name, net):
+    return int(node.query("/account/" + net.addresses[name])[1]["nonce"])
+
+
 def process_proposals(node, since=0):
     """(height, proposer, result) of every ProcessProposal this node's yapd handled."""
     text = node.log(since=since)
@@ -452,6 +516,180 @@ def phase_consensus(net, model):
     return tip
 
 
+
+ERR_EXPIRED, ERR_TTL_TOO_LONG, ERR_NONCE, ERR_INSUFFICIENT_FUNDS = 8, 9, 10, 11
+
+
+def phase_transactions(net, model):
+    n0, n1, n2, n3 = net.nodes
+    marks = {n.i: n.log_size() for n in net.nodes}
+    YAP = YIP
+
+    step("C1-C4", "Transfer via validator 0, Transfer via 1, Burn via 2, Transfer via 3 (different senders)")
+    plan = [(n0, "transfer", "alice", "bob", 1_500_000), (n1, "transfer", "bob", "carol", 2 * YAP),
+            (n2, "burn", "carol", None, 3 * YAP), (n3, "transfer", "dave", "alice", 1 * YAP)]
+    sent = []
+    for node, kind, sender, to, amount in plan:
+        tx_hex, h = net.make_tx(kind, sender, nonce_of(node, sender, net), amount, to=to, node=node)
+        model.register(tx_hex, kind, sender, amount, to=to)
+        check(broadcast_result(node, tx_hex) == 0, f"{node} rejected {kind} of {sender}")
+        sent.append((node, kind, sender, h))
+    for node, kind, sender, h in sent:
+        height = net.wait_included(h)
+        seen = sorted(n.i for n in net.nodes if any(t == "NEW" and x == h for t, x, _, _ in checktx_log(n, marks[n.i])))
+        check(node.i in seen and len(seen) >= 2, f"{kind} of {sender} via {node}: CheckTx only on {seen}")
+        proposer = net.by_address[n0.header(height)["proposer_address"]]
+        note(f"{kind} {sender} via {node}: height {height} (proposer {proposer}); "
+             f"reached by P2P and checked on validators {seen}")
+
+    step("C5", "five sequential nonces of one sender in one burst through validator 1")
+    base = nonce_of(n1, "alice", net)
+    burst = []
+    for k in range(5):
+        tx_hex, h = net.make_tx("transfer", "alice", base + k, 10_000 + k, to="bob", node=n1)
+        model.register(tx_hex, "transfer", "alice", 10_000 + k, to="bob")
+        burst.append((tx_hex, h))
+    for tx_hex, _ in burst:
+        check(broadcast_result(n1, tx_hex) == 0, "sequential nonce rejected by CheckTx")
+    heights = [net.wait_included(h) for _, h in burst]
+    check(heights == sorted(heights), f"nonces executed out of order: {heights}")
+    note(f"nonces {base}..{base + 4} included at heights {heights}")
+
+    step("C6", "the same bytes sent to three nodes are executed once; a later resend is refused")
+    tx_hex, h = net.make_tx("transfer", "bob", nonce_of(n2, "bob", net), 500_000, to="alice", node=n2)
+    model.register(tx_hex, "transfer", "bob", 500_000, to="alice")
+    answers = {n.i: broadcast_result(n, tx_hex) for n in (n2, n0, n3)}
+    check(answers[2] == 0 and all(a in (0, "cache") for a in answers.values()), f"same bytes: {answers}")
+    height = net.wait_included(h)
+    late = broadcast_result(n1, tx_hex)
+    check(late in ("cache", ERR_NONCE), f"resend after inclusion: {late}")
+    note(f"answers {answers}, included once at height {height}, resend to validator-1 -> {late}")
+
+    step("C7", "conflicting transactions with the same nonce through validators 0 and 3")
+    m = nonce_of(n0, "alice", net)
+    a_hex, a = net.make_tx("transfer", "alice", m, 2 * YAP, to="bob", node=n0)
+    b_hex, b = net.make_tx("transfer", "alice", m, 3 * YAP, to="carol", node=n3)
+    model.register(a_hex, "transfer", "alice", 2 * YAP, to="bob")
+    model.register(b_hex, "transfer", "alice", 3 * YAP, to="carol")
+    ra, rb = parallel(lambda: broadcast_result(n0, a_hex), lambda: broadcast_result(n3, b_hex))
+    check(ra in (0, ERR_NONCE) and rb in (0, ERR_NONCE) and 0 in (ra, rb), f"conflict CheckTx: {ra} {rb}")
+    wait_until(lambda: nonce_of(n0, "alice", net) == m + 1 and nonce_of(n3, "alice", net) == m + 1, 60,
+               "one of the conflicting transactions")
+    net.wait_height(net.min_height() + 2)
+    fa, fb = net.find_tx(a), net.find_tx(b)
+    check((len(fa) == N) != (len(fb) == N) and not (fa and fb), f"conflict outcome A={fa} B={fb}")
+    wait_until(net.mempools_empty, 30, "the losing transaction to leave every mempool")
+    losers = {(b if fa else a): next(iter((fa or fb).values()))[0]}  # loser -> height of the winner
+    note(f"CheckTx answers {ra}/{rb}; executed {'A (to bob)' if fa else 'B (to carol)'} only, nonce {m}->{m + 1}")
+
+    step("C8-C9", "insufficient balance and TTL are refused by CheckTx on any node")
+    poor_hex, _ = net.make_tx("transfer", "carol", nonce_of(n2, "carol", net), 10_000 * YAP, to="bob", node=n2)
+    check(broadcast_result(n2, poor_hex) == ERR_INSUFFICIENT_FUNDS, "insufficient balance")
+    tip = n3.height()
+    old_hex, _ = net.make_tx("transfer", "alice", nonce_of(n3, "alice", net), 1, to="bob", expires=tip - 1, node=n3)
+    check(broadcast_result(n3, old_hex) == ERR_EXPIRED, "expired transaction")
+    far_hex, _ = net.make_tx("transfer", "alice", nonce_of(n3, "alice", net), 1, to="bob", expires=tip + 5_000, node=n3)
+    check(broadcast_result(n3, far_hex) == ERR_TTL_TOO_LONG, "TTL above max_tx_ttl_blocks")
+
+    step("C10", "competing spends of dave's whole balance through validators 1 and 2")
+    k = nonce_of(n1, "dave", net)
+    bal = int(n1.query("/account/" + net.addresses["dave"])[1]["balance"])
+    d1_hex, d1 = net.make_tx("transfer", "dave", k, bal - FEE, to="bob", node=n1)
+    d3_hex, d3 = net.make_tx("transfer", "dave", k, bal - FEE, to="carol", node=n2)
+    d2_hex, _ = net.make_tx("transfer", "dave", k + 1, bal - FEE, to="alice", node=n1)
+    model.register(d1_hex, "transfer", "dave", bal - FEE, to="bob")
+    model.register(d3_hex, "transfer", "dave", bal - FEE, to="carol")
+    r1, r3 = parallel(lambda: broadcast_result(n1, d1_hex), lambda: broadcast_result(n2, d3_hex))
+    r2 = broadcast_result(n1, d2_hex)
+    check(0 in (r1, r3) and r2 in (ERR_INSUFFICIENT_FUNDS, ERR_NONCE), f"competing spends: {r1} {r3} then {r2}")
+    wait_until(lambda: nonce_of(n1, "dave", net) == k + 1, 60, "one competing spend")
+    net.wait_height(net.min_height() + 2)
+    f1, f3 = net.find_tx(d1), net.find_tx(d3)
+    check((len(f1) == N) != (len(f3) == N) and not (f1 and f3), f"competing spends outcome {f1} {f3}")
+    losers[d3 if f1 else d1] = next(iter((f1 or f3).values()))[0]
+    for n in net.nodes:
+        acc = n.query("/account/" + net.addresses["dave"])[1]
+        check(acc["balance"] == "0", f"{n}: dave balance {acc['balance']} after spending everything once")
+    wait_until(net.mempools_empty, 30, "empty mempools")
+    note(f"answers {r1}/{r3}, second nonce {r2}; one spend executed, dave balance 0 on all nodes")
+
+    step("C11", "non-empty mempool at Commit: real CheckTx RECHECK on live nodes")
+    rechecks = {}
+    burst_hashes = []
+    for attempt in range(4):
+        base = nonce_of(n0, "alice", net)
+        for j in range(30):
+            tx_hex, h = net.make_tx("transfer", "alice", base + j, 1_000 + j, to="carol", node=n0)
+            model.register(tx_hex, "transfer", "alice", 1_000 + j, to="carol")
+            check(broadcast_result(n0, tx_hex) == 0, f"burst tx {j} rejected")
+            burst_hashes.append(h)
+        for h in burst_hashes[-30:]:
+            net.wait_included(h)
+        rechecks = {n.i: [(x, c, ch) for t, x, c, ch in checktx_log(n, marks[n.i]) if t == "RECHECK"]
+                    for n in net.nodes}
+        if sum(map(len, rechecks.values())) > 0:
+            break
+    total = sum(map(len, rechecks.values()))
+    check(total > 0, "no CheckTx RECHECK observed after 4 bursts of 30 transactions")
+    for n in net.nodes:
+        codes = {}
+        for _, c, _ in rechecks[n.i]:
+            codes[c] = codes.get(c, 0) + 1
+        note(f"{n}: {len(rechecks[n.i])} RECHECK, result codes {codes}")
+    # Every RECHECK in this phase concerns a transaction we built. A valid one stays valid. A conflict
+    # loser is still valid after Commits below the winner's height and must fail with ERR_NONCE after
+    # the Commit that executed the winner (then CometBFT drops it).
+    evicted = set()
+    for n in net.nodes:
+        for x, c, committed in rechecks[n.i]:
+            check(x in model.txs, f"{n}: RECHECK of an unknown transaction {x}")
+            if x in losers:
+                want = ERR_NONCE if committed >= losers[x] else 0
+                check(c == want, f"{n}: RECHECK of a conflict loser after Commit {committed} (winner at "
+                                 f"{losers[x]}) returned {c}, expected {want}")
+                if c:
+                    evicted.add(n.i)
+            else:
+                check(c == 0, f"{n}: a valid transaction failed RECHECK with {c} ({x[:16]}…)")
+    note(f"RECHECK evicted losing conflicting transactions (ERR_NONCE) on validators {sorted(evicted)}"
+         if evicted else "no conflict loser was left in a mempool at Commit this time (only valid RECHECKs)")
+
+    step("C12", "no stuck transactions, no double execution, identical results everywhere")
+    wait_until(net.mempools_empty, 30, "empty mempools after the burst")
+    tip = net.wait_height(net.min_height() + 1)
+    check_same_chain(net, net.nodes, tip - 1)
+    for n in net.nodes:
+        check_node_state(net, model, n, all_accounts(net))
+    model.extend(tip - 1, n0)
+    expected = [h for h in model.txs if h in model.included]
+    for h in expected:
+        found = net.find_tx(h)
+        check(len(found) == N and len(set(found.values())) == 1, f"tx {h[:16]}…: {found}")
+    note(f"{len(model.included)} transactions executed exactly once; all {N} nodes agree up to height {tip - 1}")
+    return marks
+
+
+def parallel(*fns):
+    import threading
+    out = [None] * len(fns)
+    errs = []
+
+    def run(i, f):
+        try:
+            out[i] = f()
+        except BaseException as e:  # noqa: BLE001 - re-raised below
+            errs.append(e)
+    ts = [threading.Thread(target=run, args=(i, f)) for i, f in enumerate(fns)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    if errs:
+        raise errs[0]
+    return out
+
+
+
 def main(yap, yapd, cometbft):
     base = os.environ.get("YAP_LIVE_DIR") or tempfile.mkdtemp(prefix="yn-")
     d = os.path.join(base, "net")
@@ -461,6 +699,7 @@ def main(yap, yapd, cometbft):
         net = Net(d, yap, yapd, cometbft)
         model = Model(net)
         phase_consensus(net, model)
+        phase_transactions(net, model)
 
         step("Z", "graceful stop of all nodes; verify-state of all four databases")
         codes = net.stop_all()
