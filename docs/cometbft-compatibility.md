@@ -1,5 +1,9 @@
 # Чек-лист совместимости с CometBFT v0.40.0 (для M2)
 
+**M2.0 (24.11.2026):** версия перепроверена по тегам и коду — патч-релизов нет, официальных бинарников нет, критичный
+advisory Tachyon в v0.40.0 исправлен, номера полей `Request`/`Response` и поля сообщений ниже сверены с
+`proto/tendermint/abci/types.proto` тега; получение и сборка — [ADR-0027](adr/0027-cometbft-acquisition.md).
+
 Статусы: **OK** — ядро уже соответствует; **M2** — сделать в адаптере ABCI; **CHECK** — проверить на живом узле.
 Источники: proto и код на теге v0.40.0 (`proto/tendermint/abci/types.proto`, `abci/types/messages.go`,
 `state/execution.go`, `consensus/replay.go`, `abci/client/socket_client.go`), спецификация v0.38.26 `spec/abci/`,
@@ -46,7 +50,29 @@
 | Интервал блоков: `[consensus] timeout_commit`, `create_empty_blocks` в config.toml (параметра `next_block_delay` в v0.40 нет) | M2 (конфиг) |
 | `BlockParams.MaxBytes` по умолчанию ≈ 53 МиБ в v0.40 → блоки > 100 000 tx возможны | OK (лимит записи результатов снят, коммит 7123625) |
 
+## Номера полей (сверено с proto тега v0.40.0)
+- `Request`: echo 1, flush 2, info 3, init_chain 5, query 6, check_tx 8, commit 11, list_snapshots 12, offer_snapshot 13,
+  load_snapshot_chunk 14, apply_snapshot_chunk 15, prepare_proposal 16, process_proposal 17, extend_vote 18,
+  verify_vote_extension 19, finalize_block 20, insert_tx 21, reap_txs 22 (reserved 4, 7, 9, 10).
+- `Response`: exception 1, echo 2, flush 3, info 4, init_chain 6, query 7, check_tx 9, commit 12, list_snapshots 13,
+  offer_snapshot 14, load_snapshot_chunk 15, apply_snapshot_chunk 16, prepare_proposal 17, process_proposal 18,
+  extend_vote 19, verify_vote_extension 20, finalize_block 21, insert_tx 22, reap_txs 23 (reserved 5, 8, 10, 11).
+- `RequestFinalizeBlock`: txs 1, decided_last_commit 2, misbehavior 3, hash 4, height 5, time 6, next_validators_hash 7,
+  proposer_address 8; `ResponseFinalizeBlock`: events 1, tx_results 2, validator_updates 3, consensus_param_updates 4,
+  app_hash 5; `CommitInfo{round 1, votes 2}`; `VoteInfo{validator 1, block_id_flag 3}`; `ResponseCommit{retain_height 3}`;
+  `ResponseInfo{data 1, version 2, app_version 3, last_block_height 4, last_block_app_hash 5}`.
+
+## Поведение методов, которые ядро не поддерживает (M2.2)
+| Метод | Ответ |
+|---|---|
+| `ListSnapshots` | пустой список (снапшотов нет) |
+| `OfferSnapshot` | `REJECT` (state sync не поддерживается, ADR-0006/consensus.md §7) |
+| `LoadSnapshotChunk` | пустой chunk |
+| `ApplySnapshotChunk` | `ABORT` |
+| `ExtendVote` / `VerifyVoteExtension` | не вызываются при `vote_extensions_enable_height = 0`; если вызваны — пустое расширение / `ACCEPT` только для пустого, иначе `REJECT` |
+| `InsertTx` / `ReapTxs` | используются только при `mempool.type = "app"`; мы не включаем; при вызове — `ResponseException` (явный отказ) |
+
 ## Непроверенное
-- Выйдет ли v0.40.1 до старта M2.
+- Выйдет ли v0.40.1 до старта M2 (на 24.11.2026 — нет).
 - Дата окончания поддержки семейства 2025.1 (v0.38).
 - Поведение на живом узле: всё, что помечено CHECK, и полный цикл на 4 валидаторах.

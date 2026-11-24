@@ -31,3 +31,4 @@
 | [0024](0024-keystore-and-cli.md) | Keystore и CLI `yap` | DECIDED |
 | [0025](0025-dev-chain.md) | Локальная dev-цепочка | DECIDED |
 | [0026](0026-cometbft-version.md) | Версия CometBFT для M2: v0.40.0 | DECIDED |
+| [0027](0027-cometbft-acquisition.md) | Получение CometBFT и protobuf: сборка из проверенных исходников | DECIDED |
