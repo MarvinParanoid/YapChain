@@ -389,10 +389,146 @@ def scenario_partition(net, model, args):
          f"identical on all four; state exact")
 
 
+# ------------------------------------------------------------------ scenario: latency and unstable links (M2.5d)
+
+def percentile(xs, p):
+    xs = sorted(xs)
+    if not xs:
+        return 0.0
+    k = (len(xs) - 1) * p
+    lo, hi = int(k), min(int(k) + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
+
+
+def header_time_ms(hdr):
+    """RFC 3339 with nanoseconds -> ms since the epoch."""
+    import datetime
+    t = hdr["time"]
+    main, frac = (t[:-1].split(".") + ["0"])[:2]
+    dt = datetime.datetime.strptime(main, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+    return dt.timestamp() * 1000 + int((frac + "000000000")[:9]) / 1e6
+
+
+def commit_times_ms(node):
+    """Wall-clock time (ms) at which this node's yapd made each height durable (its Commit log line)."""
+    import datetime
+    out = {}
+    for t, h in re.findall(r"^(\S+)Z yapd: Commit: height (\d+),", node.log(), re.M):
+        dt = datetime.datetime.strptime(t, "%Y-%m-%dT%H:%M:%S.%f").replace(tzinfo=datetime.timezone.utc)
+        out[int(h)] = dt.timestamp() * 1000
+    return out
+
+
+def profile_metrics(net, model, lo, hi, incl):
+    """Block intervals (wall-clock Commit times on validator-0), extra rounds (LastCommit.round of the
+    next block), and flag shares per validator over heights lo..hi."""
+    n0 = net.validators[0]
+    ct = commit_times_ms(n0)
+    times = [ct[h] for h in range(lo, hi + 1)]
+    iv = [b - a for a, b in zip(times, times[1:])]
+    rounds = [int(n0.block(h + 1)["block"]["last_commit"]["round"]) for h in range(lo, hi)]
+    model.extend(hi, n0)
+    shares = {}
+    for v in net.validators:
+        c = {ABSENT: 0, COMMIT: 0, NIL: 0}
+        for h in range(lo + 1, hi + 1):
+            c[model.flags[h].get(v.address, ABSENT)] += 1
+        shares[v.i] = c
+    return {"blocks": hi - lo + 1, "interval_median_ms": round(percentile(iv, 0.5)),
+            "interval_p95_ms": round(percentile(iv, 0.95)), "extra_rounds": sum(rounds),
+            "blocks_with_extra_rounds": sum(1 for r in rounds if r > 0),
+            "tx_inclusion_ms": [round(x) for x in incl], "flags": shares}
+
+
+def run_profile(net, model, name, blocks, txs, timeout):
+    """Sends `txs` transfers through rotating validators, then waits for `blocks` blocks under the
+    current link profile (finite timeout). Metrics are computed for whatever was produced; inclusion
+    time = wall-clock Commit of the including block on validator-0 - wall-clock send time."""
+    v = net.validators
+    lo = net.min_height(v) + 1
+    sends = []
+    for k in range(txs):
+        node = v[k % len(v)]
+        t_ms = time.time() * 1000
+        sender = ("alice", "bob", "carol")[k % 3]   # distinct senders: the burst needs no nonce ordering
+        h, code = send_transfer(net, model, node, sender, "dave", 10_000 + k)
+        check(code == 0, f"{name}: CheckTx {code}")
+        sends.append((h, t_ms))
+    stalled = False
+    try:
+        net.wait_height(lo + blocks, v, timeout=timeout)
+    except Fail:
+        stalled = True
+    hi = net.min_height(v) - 1
+    incl = []
+    for h, t_ms in sends:
+        found = net.find_tx(h, v)
+        if found:
+            height = next(iter(found.values()))[0]
+            incl.append(commit_times_ms(v[0])[height] - t_ms)
+    if hi - lo < 1:
+        return {"stalled": stalled, "blocks": max(0, hi - lo + 1), "tx_inclusion_ms": [round(x) for x in incl]}
+    m = profile_metrics(net, model, lo, hi, incl)
+    m["stalled"] = stalled
+    return m
+
+
+LATENCY_PROFILES = [
+    ("baseline (no fault)", {"ms": 0, "jitter_ms": 0}, None),
+    ("one-way 50 ms (RTT 100)", {"ms": 50, "jitter_ms": 0}, None),
+    ("one-way 150 ms (RTT 300)", {"ms": 150, "jitter_ms": 0}, None),
+    ("one-way 300 ms (RTT 600)", {"ms": 300, "jitter_ms": 0}, None),
+    ("one-way 150 +- 120 ms jitter", {"ms": 150, "jitter_ms": 120}, None),
+    ("periodic outages 1 s every 10 s", {"ms": 0, "jitter_ms": 0}, {"period_s": 10, "down_s": 1}),
+    ("aggressive: outages 2 s every 6 s", {"ms": 0, "jitter_ms": 0}, {"period_s": 6, "down_s": 2}),
+    ("aggressive: one-way 1500 ms", {"ms": 1500, "jitter_ms": 0}, None),
+]
+
+
+def scenario_latency(net, model, args):
+    v = net.validators
+    for n in v:
+        n.start()
+    net.wait_height(4)
+    wait_peers(net, v, lambda n: ids_of(v) - {n.meta["node_id"]})
+    results = {}
+    for name, delay, flap in LATENCY_PROFILES:
+        step("L", f"profile: {name} — delay is applied per direction on every P2P link")
+        net.fault("delay", **delay)
+        if flap:
+            net.fault("flap", **flap)
+        m = run_profile(net, model, name, blocks=12, txs=3, timeout=180)
+        net.fault("delay", ms=0, jitter_ms=0)
+        net.fault("flap", period_s=0, down_s=0)
+        results[name] = m
+        if m["stalled"]:
+            note(f"{name}: only {m['blocks']} of 12 blocks within 180 s (stalled); links normalized, "
+                 f"checking recovery")
+        if "interval_median_ms" in m:
+            note(f"{name}: {m['blocks']} blocks; median {m['interval_median_ms']} ms, p95 {m['interval_p95_ms']} ms "
+                 f"between blocks; extra rounds {m['extra_rounds']} in {m['blocks_with_extra_rounds']} blocks; "
+                 f"tx inclusion {m['tx_inclusion_ms']} ms")
+            note("  flags A/C/N per validator: " + "; ".join(
+                f"v{i}: {c[ABSENT]}/{c[COMMIT]}/{c[NIL]}" for i, c in m["flags"].items()))
+        # Recovery after every profile: links normal, all peers, blocks continue.
+        wait_peers(net, v, lambda n: ids_of(v) - {n.meta["node_id"]}, timeout=120)
+        net.wait_height(net.min_height(v) + 2, v, timeout=180)
+    with open(os.path.join(net.d, "latency-metrics.json"), "w") as f:
+        json.dump(results, f, indent=2)
+    step("L-end", "no conflicting block, identical roots, exact state on every node")
+    tip = net.wait_height(net.min_height(v) + 1, v)
+    check_same_chain(net, v, tip - 1)
+    check_no_conflicts(net, v)
+    check_all_state(net, model, v)
+    check_rewards(net, model, v[0], 1, tip - 1)
+    print("LATENCY METRICS " + json.dumps(results), flush=True)
+
+
 SCENARIOS = {
     "infra": scenario_infra,
     "quorum": scenario_quorum,
     "partition": scenario_partition,
+    "latency": scenario_latency,
 }
 
 
