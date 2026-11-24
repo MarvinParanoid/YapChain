@@ -1,0 +1,5 @@
+add_library(yap_abci STATIC framing.cpp server.cpp)
+add_library(yap::abci ALIAS yap_abci)
+target_include_directories(yap_abci PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(yap_abci PUBLIC yap::abci_proto Threads::Threads)
+yap_target_warnings(yap_abci)

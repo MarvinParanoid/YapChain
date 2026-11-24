@@ -104,12 +104,20 @@ FetchContent_Declare(cli11
   DOWNLOAD_NO_EXTRACT TRUE
   DOWNLOAD_NAME CLI11.hpp)
 FetchContent_MakeAvailable(cli11)
-# The downloaded file keeps its source name for file:// URLs (offline builds), so copy the
-# single verified header to a stable include path.
-file(GLOB _yap_cli11_header "${cli11_SOURCE_DIR}/*.hpp")
-list(LENGTH _yap_cli11_header _yap_cli11_count)
-if(NOT _yap_cli11_count EQUAL 1)
-  message(FATAL_ERROR "expected exactly one CLI11 header in ${cli11_SOURCE_DIR}")
+# The downloaded file keeps its source name for file:// URLs (offline builds), so a build dir that
+# switched between online and offline mode can hold two names; copy the header whose content matches
+# the pinned hash to a stable include path.
+file(GLOB _yap_cli11_candidates "${cli11_SOURCE_DIR}/*.hpp")
+set(_yap_cli11_header "")
+foreach(_c IN LISTS _yap_cli11_candidates)
+  file(SHA256 "${_c}" _h)
+  if(_h STREQUAL YAP_CLI11_SHA256)
+    set(_yap_cli11_header "${_c}")
+    break()
+  endif()
+endforeach()
+if(NOT _yap_cli11_header)
+  message(FATAL_ERROR "no CLI11 header matching SHA-256 ${YAP_CLI11_SHA256} in ${cli11_SOURCE_DIR}")
 endif()
 configure_file("${_yap_cli11_header}" "${CMAKE_BINARY_DIR}/_deps/cli11-include/CLI11.hpp" COPYONLY)
 add_library(yap_cli11 INTERFACE)
