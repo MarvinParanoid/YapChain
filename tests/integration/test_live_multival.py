@@ -789,6 +789,68 @@ def phase_rewards(net, model):
     return stopped
 
 
+def phase_blocksync(net, model, stopped):
+    n3 = net.nodes[3]
+    live = net.up()
+    step("E1-E2", f"validator-3 stays down while the others produce at least 20 more blocks")
+    net.wait_height(stopped + 22, live, timeout=240)
+    behind = net.min_height(live)
+    note(f"validator-3 at {stopped}, network at {behind}")
+
+    step("E3-E5", "restart validator-3 with its own data; it catches up through CometBFT blocksync")
+    cmark, ymark = n3.log_size("cometbft"), n3.log_size("yapd")
+    n3.start()
+    wait_until(lambda: n3.height() >= behind and not n3.rpc("status")["sync_info"]["catching_up"], 180,
+               "validator-3 to catch up")
+    clog = n3.log("cometbft", since=cmark)
+    m = re.search(r"ABCI Handshake App Info\s+module=consensus height=(\d+)", clog)
+    check(m and int(m.group(1)) == stopped, f"handshake height {m and m.group(1)} != stopped height {stopped}")
+    sw = re.search(r"Time to switch to consensus mode!\s+module=blocksync height=(\d+)", clog)
+    check(sw, "validator-3 never switched from blocksync to consensus")
+    switch = int(sw.group(1))
+    synced = switch - (stopped + 1)
+    check(synced >= 20, f"only {synced} blocks came through blocksync (switch at {switch}, stopped at {stopped})")
+    ylog = n3.log(since=ymark)
+    fin = {int(x) for x in re.findall(r"ABCI FinalizeBlock height=(\d+)", ylog)}
+    pp = {int(x) for x in re.findall(r"ABCI ProcessProposal height=(\d+)", ylog)}
+    bs = set(range(stopped + 1, switch))
+    check(bs <= fin, f"blocksync heights not finalized by validator-3's yapd: {sorted(bs - fin)[:5]}")
+    check(not (bs & pp), "ProcessProposal ran for blocksync heights (they must arrive as decided blocks)")
+    note(f"handshake at {stopped}; heights {stopped + 1}..{switch - 1} ({synced} blocks) applied via blocksync "
+         f"(FinalizeBlock without ProcessProposal); consensus from {switch}")
+
+    step("E6-E7", "same block hash and app_hash at every common height; balances, nonces, supply")
+    tip = net.wait_height(net.min_height(net.nodes) + 1, net.nodes)
+    check_same_chain(net, net.nodes, tip - 1)
+    roots = {n.i: n.roots() for n in net.nodes}
+    for h in range(1, tip):
+        check(len({roots[i][h] for i in roots}) == 1, f"state root of {h} differs between nodes")
+    heights3 = sorted(roots[3])
+    check(heights3 == list(range(1, len(heights3) + 1)), "validator-3 committed a height twice or skipped one")
+    for n in net.nodes:
+        check_node_state(net, model, n, all_accounts(net))
+
+    step("E8", "validator-3 takes part in consensus again: COMMIT votes, ProcessProposal, its own proposal")
+    def participating():
+        tip = net.min_height(net.nodes)
+        model.extend(tip, net.nodes[0])
+        votes = [h for h in range(switch + 1, tip + 1) if model.flags[h].get(n3.address) == COMMIT]
+        proposed = [h for h in range(switch, tip + 1)
+                    if net.nodes[0].header(h)["proposer_address"] == n3.address]
+        return (votes, proposed) if votes and proposed else None
+    votes, proposed = wait_until(participating, 120, "validator-3 voting and proposing again")
+    foreign = [p for h, p, r in process_proposals(n3, ymark) if h >= switch and p != n3.address]
+    check(foreign, "validator-3 did not process other validators' proposals after catching up")
+    note(f"COMMIT votes again from height {votes[0]}, proposed height {proposed[0]}, "
+         f"{len(foreign)} foreign proposals processed")
+
+    step("E9", "no double emission: minted = genesis + 2 YAP x height on every node")
+    tip = net.wait_height(net.min_height(net.nodes) + 1, net.nodes)
+    for n in net.nodes:
+        check_rewards(net, model, n, stopped, tip - 1)
+        h = check_node_state(net, model, n, all_accounts(net))
+        note(f"{n}: exact at height {h}")
+
 
 def main(yap, yapd, cometbft):
     base = os.environ.get("YAP_LIVE_DIR") or tempfile.mkdtemp(prefix="yn-")
@@ -801,6 +863,7 @@ def main(yap, yapd, cometbft):
         phase_consensus(net, model)
         phase_transactions(net, model)
         stopped = phase_rewards(net, model)
+        phase_blocksync(net, model, stopped)
 
         step("Z", "graceful stop of all nodes; verify-state of all four databases")
         codes = net.stop_all()
