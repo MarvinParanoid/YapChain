@@ -270,9 +270,129 @@ def scenario_quorum(net, model, args):
     check(not gaps, f"blocks with fewer than 3 COMMIT signatures: {gaps}")
 
 
+# ------------------------------------------------------------------ scenario: partitions 3+1 and 2+2 (M2.5c)
+
+def cross_bytes(net, groups):
+    """Bytes forwarded so far on links between different groups."""
+    side = {i: k for k, g in enumerate(groups) for i in g}
+    return sum(sum(x["bytes"]) for x in net.links().values()
+               if x["src"] in side and x["dst"] in side and side[x["src"]] != side[x["dst"]])
+
+
+def partition(net, groups):
+    """Applies a partition and waits until CometBFT itself reports exactly the in-group peers. Returns
+    the evidence: peers per node and the cross-group byte counter."""
+    net.fault("partition", groups=groups)
+    nodes = {n.i: n for n in net.validators}
+    for g in groups:
+        members = [nodes[i] for i in g]
+        wait_peers(net, members, lambda n, members=members: ids_of(members) - {n.meta["node_id"]}, timeout=60)
+    peers = {n.i: sorted(nodes_by_id(net)[p].i for p in peer_ids(n)) for n in net.validators}
+    return peers, cross_bytes(net, groups)
+
+
+def nodes_by_id(net):
+    return {n.meta["node_id"]: n for n in net.nodes}
+
+
+def heal(net):
+    net.fault("heal")
+    wait_peers(net, net.validators, lambda n: ids_of(net.validators) - {n.meta["node_id"]}, timeout=90)
+
+
+def catchup_evidence(node, ymark, cmark, lo, hi):
+    """How a running node got heights lo..hi after a partition healed: decided blocks (FinalizeBlock
+    without ProcessProposal) and whether CometBFT used blocksync or consensus catch-up gossip."""
+    ylog, clog = node.log(since=ymark), node.log("cometbft", since=cmark)
+    fin = {int(x) for x in re.findall(r"ABCI FinalizeBlock height=(\d+)", ylog)}
+    pp = {int(x) for x in re.findall(r"ABCI ProcessProposal height=(\d+)", ylog)}
+    missing = set(range(lo, hi + 1))
+    check(missing <= fin, f"{node}: heights {sorted(missing - fin)[:5]} not finalized after healing")
+    via = "blocksync" if "Time to switch to consensus mode" in clog else "consensus catch-up gossip"
+    return len(missing - pp), via
+
+
+def scenario_partition(net, model, args):
+    v = net.validators
+    v0, v1, v2, v3 = v
+    for n in v:
+        n.start()
+    net.wait_height(4)
+    wait_peers(net, v, lambda n: ids_of(v) - {n.meta["node_id"]})
+
+    step("P1", "partition 3+1: validator-3 isolated, all four processes keep running")
+    peers, cross0 = partition(net, [[0, 1, 2], [3]])
+    note(f"peers by CometBFT net_info: {peers}")
+    three = [v0, v1, v2]
+    h_iso = v3.height()
+    ymark, cmark = v3.log_size(), v3.log_size("cometbft")
+
+    step("P2", "the connected three keep finalizing; the isolated one finalizes nothing")
+    t_maj, c_maj = send_transfer(net, model, v0, "alice", "bob", 2_000_000)
+    t_min, c_min = send_transfer(net, model, v3, "bob", "carol", 3_000_000)
+    check(c_maj == 0 and c_min == 0, f"CheckTx {c_maj} {c_min}")
+    net.wait_height(net.min_height(three) + 6, three, timeout=120)
+    frozen(net, [v3], 10, settle=0)
+    check(v3.height() == h_iso, f"isolated validator moved from {h_iso} to {v3.height()}")
+    wait_until(lambda: len(net.find_tx(t_maj, three)) == 3, 60, "majority transaction on the three")
+    check(not net.find_tx(t_min, v), "the isolated side's transaction was finalized during the partition")
+    check(cross_bytes(net, [[0, 1, 2], [3]]) == cross0, "bytes crossed the partition")
+    top = check_no_conflicts(net, v)
+    note(f"isolated validator-3 stayed at {h_iso}; majority reached {net.min_height(three)}; its tx included, "
+         f"the isolated side's tx only in validator-3's mempool; 0 bytes across; no conflict up to {top}")
+
+    step("P3", "heal: validator-3 catches up and votes again; its pending transaction is executed")
+    tip_before = net.min_height(three)
+    heal(net)
+    net.wait_height(tip_before + 2, v, timeout=180)
+    synced, via = catchup_evidence(v3, ymark, cmark, h_iso + 1, tip_before)
+    net.wait_included(t_min, timeout=120)
+    model.extend(net.min_height(v), v0)
+    wait_until(lambda: model.extend(net.min_height(v), v0) and any(
+        model.flags[h].get(v3.address) == COMMIT for h in range(tip_before + 2, net.min_height(v) + 1)),
+        120, "validator-3 COMMIT votes after healing")
+    note(f"heights {h_iso + 1}..{tip_before} ({tip_before - h_iso} blocks) applied by validator-3 as decided "
+         f"blocks ({synced} without ProcessProposal) via {via}; votes COMMIT again")
+
+    step("P4", "partition 2+2: no side has a quorum")
+    peers, cross0 = partition(net, [[0, 1], [2, 3]])
+    note(f"peers by CometBFT net_info: {peers}")
+    m = nonce_of(v0, "alice", net)
+    check(m == nonce_of(v2, "alice", net), "both sides agree on alice's nonce before the split")
+    a_hex, a = net.make_tx("transfer", "alice", m, 4_000_000, to="bob", node=v0)
+    b_hex, b = net.make_tx("transfer", "alice", m, 5_000_000, to="carol", node=v2)
+    model.register(a_hex, "transfer", "alice", 4_000_000, to="bob")
+    model.register(b_hex, "transfer", "alice", 5_000_000, to="carol")
+    ra, rb = broadcast_result(v0, a_hex), broadcast_result(v2, b_hex)
+    check(ra == 0 and rb == 0, f"conflicting transactions accepted by each side: {ra} {rb}")
+    stall = frozen(net, v, 20)
+    check(cross_bytes(net, [[0, 1], [2, 3]]) == cross0, "bytes crossed the 2+2 partition")
+    check(not net.find_tx(a, v) and not net.find_tx(b, v), "a conflicting transaction finalized without quorum")
+    rounds = {n.i: consensus_round(n)[1] for n in v}
+    note(f"same-nonce transfers A (to bob) via validator-0 and B (to carol) via validator-2 accepted by their "
+         f"sides; no block for 20 s at {stall}; consensus rounds {rounds}; 0 bytes across")
+
+    step("P5", "heal: consensus continues; at most one of A/B executes; balances, nonce, supply exact")
+    heal(net)
+    hs = max(stall.values())
+    net.wait_height(hs + 3, v, timeout=180)
+    wait_until(lambda: nonce_of(v0, "alice", net) == m + 1, 60, "alice nonce m+1")
+    tip = net.wait_height(net.min_height(v) + 2, v)
+    fa, fb = net.find_tx(a, v), net.find_tx(b, v)
+    check(not (fa and fb) and (len(fa) == N or len(fb) == N), f"conflict outcome A={fa} B={fb}")
+    wait_until(net.mempools_empty, 60, "the losing transaction to leave every mempool")
+    check_same_chain(net, v, tip - 1)
+    check_no_conflicts(net, v)
+    check_all_state(net, model, v)
+    check_rewards(net, model, v0, 1, tip - 1)
+    note(f"executed {'A (to bob)' if fa else 'B (to carol)'} only; nonce {m}->{m + 1}; heights 1..{tip - 1} "
+         f"identical on all four; state exact")
+
+
 SCENARIOS = {
     "infra": scenario_infra,
     "quorum": scenario_quorum,
+    "partition": scenario_partition,
 }
 
 

@@ -92,7 +92,7 @@ if(YAP_BUILD_TESTS)
                 $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN})
       set_tests_properties(integration:live_multival PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
       # Fault tolerance of the four-validator network through the netfault P2P proxy (M2.5).
-      set(YAP_FAULT_SCENARIOS infra quorum)
+      set(YAP_FAULT_SCENARIOS infra quorum partition)
       foreach(scenario IN LISTS YAP_FAULT_SCENARIOS)
         add_test(NAME integration:fault_${scenario}
           COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_faults.py ${scenario}
