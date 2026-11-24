@@ -690,6 +690,106 @@ def parallel(*fns):
 
 
 
+def account_hex(addr):
+    return bytes(bech32m_ref.decode_address(addr.encode(), "tyap")).hex()
+
+
+def app_votes(node, since=0):
+    """height -> {validator address: (power, flag)} as the application received decided_last_commit."""
+    out = {}
+    for m in re.finditer(r"ABCI FinalizeBlock height=(\d+) [^\n]*commit=\[([^\]]*)\]", node.log(since=since)):
+        votes = {}
+        for item in filter(None, m.group(2).split(",")):
+            a, pw, fl = item.split(":")
+            votes[a.upper()] = (int(pw), int(fl))
+        out[int(m.group(1))] = votes
+    return out
+
+
+def check_rewards(net, model, node, lo, hi):
+    """For every height lo..hi: the application received exactly CometBFT's last commit (addresses,
+    powers, flags), and the emitted rewards (block events) equal the normative split over the
+    COMMIT signers — to the last yip. Returns flag counts."""
+    model.extend(hi, node)
+    votes = app_votes(node)
+    counts = {ABSENT: 0, COMMIT: 0, NIL: 0}
+    for h in range(lo, hi + 1):
+        flags = model.flags[h]
+        if h > 1:
+            check(h in votes, f"{node}: no FinalizeBlock trace for height {h}")
+            got = {a: f for a, (pw, f) in votes[h].items()}
+            check(got == flags, f"{node} height {h}: app decided_last_commit {got} != block LastCommit {flags}")
+            check(all(pw == POWER for pw, _ in votes[h].values()), f"{node} height {h}: powers {votes[h]}")
+        for f in flags.values():
+            counts[f] += 1
+        events = node.rpc("block_results", height=h)["finalize_block_events"] or []
+        paid = {}
+        block_reward = None
+        for e in events:
+            attrs = {a["key"]: a["value"] for a in e["attributes"]}
+            if e["type"] == "validator_reward":
+                paid[attrs["account"]] = int(attrs["amount"])
+            elif e["type"] == "block_reward":
+                block_reward = attrs
+        want = {account_hex(addr): amount for addr, amount in model.rewards[h].items()}
+        check(paid == want, f"height {h}: rewards paid {paid} != expected {want}")
+        t = T_SHARE + V_SHARE - sum(want.values())
+        check(block_reward is not None and int(block_reward["minted"]) == REWARD
+              and int(block_reward["validators"]) == V_SHARE and int(block_reward["rewards_pool"]) == POOL_SHARE
+              and int(block_reward["treasury"]) == t, f"height {h}: block_reward {block_reward}, treasury {t}")
+    return counts
+
+
+def phase_rewards(net, model):
+    n0, n3 = net.nodes[0], net.nodes[3]
+    step("D1", "scenario A, all four running: decided_last_commit, powers, rewards by actual COMMIT votes")
+    tip = net.wait_height(net.min_height() + 1)
+    for n in net.nodes:
+        counts = check_rewards(net, model, n, 1, tip - 1)
+    full = sum(1 for h in range(2, tip) if len(model.signers[h]) == N)
+    note(f"heights 1..{tip - 1}: flags {counts} (ABSENT {counts[ABSENT]}, NIL {counts[NIL]}); "
+         f"{full} heights signed by all {N}; height 1: no votes, validators' share {V_SHARE} to treasury")
+    note(f"per signer: {V_SHARE * POWER // (POWER * N)} yip with 4 signers, "
+         f"{V_SHARE * POWER // (POWER * 3)} with 3; pool {POOL_SHARE}, treasury {T_SHARE} + remainder")
+
+    step("D2", "scenario B: stop CometBFT and yapd of validator-3; the other three keep producing blocks")
+    codes = n3.stop()
+    check(codes == {"cometbft": 0, "yapd": 0}, f"validator-3 exit codes {codes}")
+    stopped = int(re.findall(r"stopped at height (\d+)", n3.log())[-1])
+    live = net.up()
+    start = net.min_height(live)
+    net.wait_height(start + 5, live, timeout=120)
+    note(f"validator-3 stopped at height {stopped}; the other three went from {start} to {net.min_height(live)}")
+
+    step("D3", "ABSENT observed for validator-3; it gets nothing for a missing vote")
+    def absent_heights():
+        tip = net.min_height(live)
+        model.extend(tip, live[0])
+        return [h for h in range(stopped + 1, tip + 1) if model.flags[h].get(n3.address) == ABSENT]
+    absent = wait_until(lambda: (lambda a: a if len(a) >= 3 else None)(absent_heights()), 120,
+                        "three blocks with validator-3 ABSENT")
+    tip = net.wait_height(net.min_height(live) + 1, live)
+    for n in live:
+        check_rewards(net, model, n, stopped, tip - 1)
+        check_node_state(net, model, n, all_accounts(net))
+    for h in absent:
+        check(n3.reward not in model.rewards[h], f"validator-3 rewarded at height {h} without a vote")
+    three = [h for h in absent if len(model.signers[h]) == 3]
+    check(three, "no height with exactly the three live signers")
+    h = three[0]
+    note(f"ABSENT at heights {absent[:8]}{'…' if len(absent) > 8 else ''}; e.g. height {h}: signers "
+         f"{[str(net.by_address[a]) for a in model.signers[h]]} get {model.rewards[h][live[0].reward]} each, "
+         f"validator-3 0, treasury {T_SHARE} + {V_SHARE - 3 * (V_SHARE // 3)}")
+    nils = [(hh, a) for hh in sorted(model.flags) for a, f in model.flags[hh].items() if f == NIL]
+    for hh, a in nils:  # observed live: the validator precommitted nil; it must not be paid for that height
+        check(model.reward_of[a] not in model.rewards[hh], f"NIL validator {net.by_address[a]} rewarded at {hh}")
+    note("NIL observed live: " + (", ".join(f"height {hh} {net.by_address[a]} (not rewarded; signers "
+                                            f"{len(model.signers[hh])})" for hh, a in nils) if nils else
+                                  "none in this run (NIL is covered by the adapter test with an exact message)"))
+    return stopped
+
+
+
 def main(yap, yapd, cometbft):
     base = os.environ.get("YAP_LIVE_DIR") or tempfile.mkdtemp(prefix="yn-")
     d = os.path.join(base, "net")
@@ -700,6 +800,7 @@ def main(yap, yapd, cometbft):
         model = Model(net)
         phase_consensus(net, model)
         phase_transactions(net, model)
+        stopped = phase_rewards(net, model)
 
         step("Z", "graceful stop of all nodes; verify-state of all four databases")
         codes = net.stop_all()
@@ -708,6 +809,8 @@ def main(yap, yapd, cometbft):
             vs = ln.kv(net.cli("verify-state", home=n.meta["yapd_home"]).stdout)
             last_h, last_root = n.commits()[-1]
             check(int(vs["height"]) == last_h and vs["state_root"] == last_root, f"{n}: verify-state {vs}")
+            others = [m.roots().get(last_h) for m in net.nodes]
+            check(all(r in (None, last_root) for r in others), f"{n}: root of {last_h} differs from other nodes")
             note(f"{n}: verify-state OK at height {vs['height']}, root {vs['state_root'][:16]}…")
         size = check_no_secrets(net)
         note(f"no password or private key in {size} bytes of node logs (traces enabled)")

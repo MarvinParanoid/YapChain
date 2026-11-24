@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -647,4 +648,66 @@ TEST_CASE("app: four concurrent connections, one consistent engine", "[abci][app
     CHECK_FALSE(app.failure().has_value());
     CHECK(engine.info().last_height == 20);
     server.stop();
+}
+
+// ------------------------------------------------------------------ M2.4d: NIL from the exact CometBFT message
+
+namespace {
+
+/// A node that has committed height 1 (so height 2 carries a last commit).
+Node node_at_height_1(const test::TestNet& net) {
+    Node n;
+    n.call(init_chain_req(net.genesis));
+    n.call(finalize_req(net.genesis, 1, {}));
+    n.call(simple(ta::Request::kCommit));
+    return n;
+}
+
+}  // namespace
+
+TEST_CASE("app: NIL and ABSENT in decided_last_commit — exact CometBFT message", "[abci][app][economics]") {
+    const auto net = small_net();
+    auto n = node_at_height_1(net);
+    // RequestFinalizeBlock for height 2 as CometBFT v0.40.0 builds it (state/execution.go
+    // buildLastCommitInfo): one VoteInfo per validator of height 1 in validator-set order, flags
+    // COMMIT, NIL, ABSENT, COMMIT. Round-tripped through the wire encoding.
+    ta::Request built = finalize_req(net.genesis, 2, {});
+    auto* votes = built.mutable_finalize_block()->mutable_decided_last_commit()->mutable_votes();
+    REQUIRE(votes->size() == 4);
+    votes->Mutable(1)->set_block_id_flag(tendermint::types::BLOCK_ID_FLAG_NIL);
+    votes->Mutable(2)->set_block_id_flag(tendermint::types::BLOCK_ID_FLAG_ABSENT);
+    const std::string wire = built.SerializeAsString();
+    ta::Request req;
+    REQUIRE(req.ParseFromString(wire));
+    const auto& v1 = req.finalize_block().decided_last_commit().votes(1);
+    CHECK(v1.block_id_flag() == 3);  // BLOCK_ID_FLAG_NIL = 3 on the wire (VoteInfo field 3)
+    CHECK(v1.SerializeAsString().find(std::string("\x18\x03", 2)) != std::string::npos);
+    CHECK(req.finalize_block().decided_last_commit().votes(2).block_id_flag() == 1);
+
+    const auto fin = n.call(req).finalize_block();
+    n.call(simple(ta::Request::kCommit));
+    // Only COMMIT signers share the validators' part: 1.2 YAP over 2 x power 10 -> 600 000 yip each.
+    std::map<std::string, std::uint64_t> paid;
+    std::uint64_t treasury_part = 0;
+    for (const auto& e : fin.events()) {
+        std::map<std::string, std::string> a;
+        for (const auto& kv : e.attributes()) a[kv.key()] = kv.value();
+        if (e.type() == "validator_reward") paid[a["validator"]] = std::stoull(a["amount"]);
+        if (e.type() == "block_reward") treasury_part = std::stoull(a["treasury"]);
+    }
+    const auto hex_addr = [&](std::size_t i) { return to_hex(addr_of(net.genesis.validators[i])); };
+    CHECK(paid == std::map<std::string, std::uint64_t>{{hex_addr(0), 600'000}, {hex_addr(3), 600'000}});
+    CHECK(treasury_part == 200'000);  // t plus the (zero) remainder
+    const auto balance = [&](const crypto::AccountId& id) {
+        const auto q = n.call(query_req("/account/" + crypto::encode_address(crypto::kTestnetHrp, id))).query();
+        REQUIRE(q.code() == 0);
+        return std::stoull(nlohmann::json::parse(q.value())["balance"].get<std::string>());
+    };
+    CHECK(balance(net.genesis.validators[0].reward_account) == 600'000);
+    CHECK(balance(net.genesis.validators[1].reward_account) == 0);  // NIL: no reward
+    CHECK(balance(net.genesis.validators[2].reward_account) == 0);  // ABSENT: no reward
+    CHECK(balance(net.genesis.validators[3].reward_account) == 600'000);
+    // Height 1 (no votes): the validators' share went to the treasury; height 2: t only.
+    CHECK(balance(crypto::system_account_id(crypto::kTreasuryAccountName)) == 1'400'000 + 200'000);
+    CHECK(balance(crypto::system_account_id(crypto::kRewardsPoolAccountName)) == 2 * 600'000);
 }
