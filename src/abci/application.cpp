@@ -42,6 +42,46 @@ void query_error(pb::ResponseQuery& r, QueryCode code, const std::string& log) {
 }
 
 std::string u64s(std::uint64_t v) { return std::to_string(v); }  // u64 as decimal strings, like genesis JSON
+
+std::string votes_summary(const pb::CommitInfo& c) {
+    std::string s = "votes=" + std::to_string(c.votes_size()) + " flags=";
+    for (const auto& v : c.votes()) s += std::to_string(static_cast<int>(v.block_id_flag()));
+    return s;
+}
+
+std::string trace_line(const pb::Request& r) {
+    switch (r.value_case()) {
+        case pb::Request::kInfo: return "Info";
+        case pb::Request::kInitChain:
+            return "InitChain chain_id=" + r.init_chain().chain_id() +
+                   " initial_height=" + std::to_string(r.init_chain().initial_height()) +
+                   " validators=" + std::to_string(r.init_chain().validators_size()) +
+                   " app_version=" + std::to_string(r.init_chain().consensus_params().version().app()) +
+                   " vote_ext_height=" + std::to_string(r.init_chain().consensus_params().abci().vote_extensions_enable_height());
+        case pb::Request::kQuery: return "Query path=" + r.query().path();
+        case pb::Request::kCheckTx:
+            return std::string("CheckTx type=") + (r.check_tx().type() == pb::RECHECK ? "RECHECK" : "NEW") +
+                   " bytes=" + std::to_string(r.check_tx().tx().size());
+        case pb::Request::kPrepareProposal:
+            return "PrepareProposal height=" + std::to_string(r.prepare_proposal().height()) +
+                   " txs=" + std::to_string(r.prepare_proposal().txs_size()) +
+                   " max_tx_bytes=" + std::to_string(r.prepare_proposal().max_tx_bytes()) +
+                   " local_votes=" + std::to_string(r.prepare_proposal().local_last_commit().votes_size());
+        case pb::Request::kProcessProposal:
+            return "ProcessProposal height=" + std::to_string(r.process_proposal().height()) +
+                   " txs=" + std::to_string(r.process_proposal().txs_size()) + " " +
+                   votes_summary(r.process_proposal().proposed_last_commit());
+        case pb::Request::kFinalizeBlock:
+            return "FinalizeBlock height=" + std::to_string(r.finalize_block().height()) +
+                   " time=" + std::to_string(r.finalize_block().time().seconds()) + "." +
+                   std::to_string(r.finalize_block().time().nanos()) +
+                   " txs=" + std::to_string(r.finalize_block().txs_size()) + " " +
+                   votes_summary(r.finalize_block().decided_last_commit()) +
+                   " misbehavior=" + std::to_string(r.finalize_block().misbehavior_size());
+        case pb::Request::kCommit: return "Commit";
+        default: return "request field " + std::to_string(static_cast<int>(r.value_case()));
+    }
+}
 }  // namespace
 
 void require_consensus_store(const storage::KvStore& store) {
@@ -67,6 +107,7 @@ void Application::log(const std::string& line) const {
 void Application::handle(const pb::Request& request, pb::Response& response) {
     const std::lock_guard lock(mu_);
     if (failure_) throw std::runtime_error("application stopped after a fatal error: " + *failure_);
+    if (opts_.trace) log("ABCI " + trace_line(request));
     try {
         dispatch(request, response);
     } catch (const std::exception& e) {

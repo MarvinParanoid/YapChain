@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <catch2/catch_test_macros.hpp>
 
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <cstring>
 
 #include <atomic>
 #include <chrono>
@@ -245,6 +250,30 @@ TEST_CASE("server: concurrent connections and the connection limit", "[abci][ser
     server.stop();  // graceful with connections still open
     CHECK(server.active_connections() == 0);
     CHECK_FALSE(std::filesystem::exists(fx.opts().socket_path));
+}
+
+TEST_CASE("server: refuses a socket another server listens on, replaces a stale one", "[abci][server]") {
+    Fixture fx;
+    abci::Server first(fx.opts(), fx.handler);
+    first.start();
+    abci::Server second(fx.opts(), fx.handler);
+    CHECK_THROWS_AS(second.start(), std::runtime_error);
+    test::AbciClient c(fx.opts().socket_path.string());  // the first server is untouched
+    CHECK(c.call(echo("still here")).echo().message() == "still here");
+    first.stop();
+    // A leftover socket file without a listener is stale and replaced.
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    sockaddr_un a{};
+    a.sun_family = AF_UNIX;
+    const auto p = fx.opts().socket_path.string();
+    std::memcpy(a.sun_path, p.c_str(), p.size() + 1);
+    REQUIRE(::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0);
+    ::close(fd);
+    abci::Server third(fx.opts(), fx.handler);
+    third.start();
+    test::AbciClient c3(p);
+    CHECK(c3.call(echo("new")).echo().message() == "new");
+    third.stop();
 }
 
 TEST_CASE("server: refuses to replace a non-socket file", "[abci][server]") {

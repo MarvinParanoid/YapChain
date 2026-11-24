@@ -60,6 +60,7 @@ add_subdirectory(src/dev)
 add_subdirectory(src/cli)
 if(YAP_WITH_ABCI)
   add_subdirectory(src/abci)
+  add_subdirectory(src/node)
 endif()
 
 if(YAP_BUILD_TESTS OR YAP_FUZZ)

@@ -59,6 +59,16 @@ void Server::start() {
     struct stat st {};
     if (::lstat(path.c_str(), &st) == 0) {
         if (!S_ISSOCK(st.st_mode)) throw std::runtime_error(path + " exists and is not a socket");
+        // A socket someone still listens on is not stale: never steal it from a running server.
+        const int probe = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (probe >= 0) {
+            sockaddr_un pa{};
+            pa.sun_family = AF_UNIX;
+            std::memcpy(pa.sun_path, path.c_str(), path.size() + 1);
+            const bool live = ::connect(probe, reinterpret_cast<sockaddr*>(&pa), sizeof(pa)) == 0;
+            ::close(probe);
+            if (live) throw std::runtime_error(path + " is in use by a running server");
+        }
         ::unlink(path.c_str());  // stale socket from a previous run
     }
     if (::pipe2(wake_pipe_, O_CLOEXEC) != 0) throw std::runtime_error("pipe2 failed");

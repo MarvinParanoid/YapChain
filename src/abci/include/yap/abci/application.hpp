@@ -28,6 +28,8 @@ struct ApplicationOptions {
     std::string software_version = "0.1.0";
     /// Diagnostics (non-consensus): commits, re-executions, fatal errors.
     std::function<void(const std::string&)> log;
+    /// Also log one line per request (method, height, sizes) — for checking real CometBFT traffic.
+    bool trace = false;
 };
 
 class Application final : public Handler {
