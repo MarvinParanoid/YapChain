@@ -179,8 +179,100 @@ def scenario_infra(net, model, args):
     note(f"no conflicting block at heights 1..{top}; {len(log)} timestamped fault events")
 
 
+# ------------------------------------------------------------------ scenario: quorum loss and recovery (M2.5b)
+
+def consensus_round(n):
+    """(height, round, step) the node's consensus is in right now (RPC consensus_state)."""
+    h, r, st = n.rpc("consensus_state")["round_state"]["height/round/step"].split("/")
+    return int(h), int(r), int(st)
+
+
+def send_transfer(net, model, node, sender, to, amount):
+    """Builds, registers and broadcasts a Transfer through `node`; returns (hash, CheckTx code)."""
+    tx_hex, h = net.make_tx("transfer", sender, nonce_of(node, sender, net), amount, to=to, node=node)
+    model.register(tx_hex, "transfer", sender, amount, to=to)
+    return h, broadcast_result(node, tx_hex)
+
+
+def check_all_state(net, model, nodes):
+    for n in nodes:
+        check_node_state(net, model, n, all_accounts(net))
+
+
+def scenario_quorum(net, model, args):
+    v = net.validators
+    v0, v1, v2, v3 = v
+    step("Q1-Q2", "four validators (power 10 each, quorum > 26.67 i.e. 3 of 4); stable finalization")
+    for n in v:
+        n.start()
+    net.wait_height(5)
+
+    step("Q3", "several valid transactions")
+    sent = [send_transfer(net, model, v[k], s, t, 1_000_000 + k)
+            for k, (s, t) in enumerate([("alice", "bob"), ("bob", "carol"), ("carol", "alice")])]
+    check(all(c == 0 for _, c in sent), f"CheckTx {sent}")
+    for h, _ in sent:
+        net.wait_included(h)
+
+    step("Q4-Q5", "stop validator-3: 30 of 40 power remain (> 2/3), blocks continue")
+    net.event("stop validator-3")
+    check(v3.stop() == {"cometbft": 0, "yapd": 0}, "validator-3 exit codes")
+    three = [v0, v1, v2]
+    h0 = net.min_height(three)
+    net.wait_height(h0 + 4, three, timeout=120)
+
+    step("Q6-Q8", "stop validator-2: 20 of 40 power — no quorum; no block and no emission over a long window")
+    net.event("stop validator-2")
+    check(v2.stop() == {"cometbft": 0, "yapd": 0}, "validator-2 exit codes")
+    two = [v0, v1]
+    stall = frozen(net, two, 25)
+    hs = max(stall.values())
+    chain_before = {n.i: n.query("/chain") for n in two}
+    rounds = {n.i: consensus_round(n) for n in two}
+    check(all(h == hs + 1 for h, _, _ in rounds.values()), f"consensus should wait at height {hs + 1}: {rounds}")
+    # With 20 of 40 power there is never "+2/3 of any" prevote, so timeout_prevote never starts and the
+    # round does not advance: consensus waits at height hs+1 (height/round/step from consensus_state).
+    note(f"stuck at committed height {hs}; consensus waits at height/round/step "
+         f"{[f'{h}/{r}/{st}' for h, r, st in rounds.values()]}")
+
+    step("Q9-Q10", "a transaction accepted into the mempool is not finalized without a quorum")
+    pend, code = send_transfer(net, model, v0, "alice", "carol", 7_777_777)
+    check(code == 0, f"CheckTx of the pending transaction: {code}")
+    wait_until(lambda: all(int(n.rpc("num_unconfirmed_txs")["n_txs"]) >= 1 for n in two), 20,
+               "the pending transaction in both mempools")
+    frozen(net, two, 10, settle=0)
+    check(not net.find_tx(pend, two), "pending transaction finalized without a quorum")
+    for n in two:
+        h, chain = n.query("/chain")
+        check(h == hs and chain == chain_before[n.i][1], f"{n}: state changed without a quorum")
+    note(f"pending tx {pend[:16]}… in the mempool of validator-0 and -1, not in any block; "
+         f"minted/supply unchanged at {hs}")
+
+    step("Q11-Q13", "restart validator-2 with its data: quorum is back, the pending transaction is executed")
+    net.event("restart validator-2")
+    v2.start()
+    three = [v0, v1, v2]
+    net.wait_height(hs + 3, three, timeout=180)
+    inc = net.wait_included(pend)
+    note(f"consensus resumed at {hs + 1}; pending transaction included at height {inc}")
+
+    step("Q14-Q16", "restart validator-3; all four synchronize; same hashes, roots and state")
+    net.event("restart validator-3")
+    v3.start()
+    tip = net.wait_height(net.min_height(three) + 2, v, timeout=240)
+    check_same_chain(net, v, tip - 1)
+    check_no_conflicts(net, v)
+    check_all_state(net, model, v)
+    check_rewards(net, model, v0, 1, tip - 1)
+    gaps = [h for h in range(hs + 1, tip) if len(model.signers.get(h, [])) < 3 and h > 1]
+    note(f"all four at {tip}; heights 1..{tip - 1} identical; state exact; no block was signed by fewer than "
+         f"3 validators {'' if not gaps else gaps}")
+    check(not gaps, f"blocks with fewer than 3 COMMIT signatures: {gaps}")
+
+
 SCENARIOS = {
     "infra": scenario_infra,
+    "quorum": scenario_quorum,
 }
 
 
