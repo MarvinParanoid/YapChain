@@ -99,6 +99,26 @@ validator key и node key, свои логи и свой reward-счёт. Общ
 затем переходит в consensus. Если нода простояла недолго, она может догнать через обычный gossip
 консенсуса — это не blocksync.
 
+## Управляемые сетевые отказы (M2.5)
+`init --validators 4 --fault-proxy` направляет каждую P2P-связь i→j через свой порт непривилегированного TCP-прокси
+[`netfault.py`](netfault.py) (asyncio, только stdlib, без root). `persistent_peers` ноды i указывают на порты прокси,
+PEX выключен — другого маршрута между нодами нет. RPC (TCP) и ABCI (Unix socket) через прокси не идут. Прокси
+запускается `start` и останавливается `stop` последним; события пишутся с временем в `<dir>/faults.log`.
+```sh
+L="python3 -I scripts/localnet/localnet.py"
+$L init  --dir build/disk-tmp/f4 --validators 4 --fault-proxy --yap … --cometbft …
+$L start --dir build/disk-tmp/f4 --yapd … --cometbft …
+$L fault --dir build/disk-tmp/f4 '{"cmd": "partition", "groups": [[0, 1, 2], [3]]}'   # 3+1
+$L fault --dir build/disk-tmp/f4 '{"cmd": "heal"}'
+$L fault --dir build/disk-tmp/f4 '{"cmd": "delay", "ms": 150, "jitter_ms": 50}'        # ОДНОСТОРОННЯЯ, RTT = 2×
+$L fault --dir build/disk-tmp/f4 '{"cmd": "flap", "period_s": 5, "down_s": 1}'         # периодические разрывы
+$L fault --dir build/disk-tmp/f4 '{"cmd": "reset", "probability": 0.3}'                # сброс TCP-соединений
+$L fault --dir build/disk-tmp/f4 '{"cmd": "status"}'                                   # связи, байты, задержка
+$L add-node --dir build/disk-tmp/f4 --cometbft …     # full node без права голоса (не в наборе валидаторов)
+```
+Потеря отдельных пакетов **не моделируется**: для неё нужен tc/netem (root, модуль ядра); сброс TCP-соединения —
+это другой отказ. Прокси и тестовые хуки — только тестовые инструменты; в `yapd` их нет.
+
 ## Живой E2E-тест
 `tests/integration/test_live_cometbft.py <yap> <yapd> <cometbft> <yapd-test-hooks>` — 17 шагов и два сценария
 сбоя (сбой — через `yapd-test-hooks`, восстановление — обычным `yapd`); в CTest — `integration:live_cometbft`.

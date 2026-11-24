@@ -321,8 +321,13 @@ def init(d, yap, cometbft, chain_id=DEFAULT_CHAIN_ID, timeout_commit="1s", valid
     return meta
 
 
-def init_network(d, yap, cometbft, n, chain_id=DEFAULT_CHAIN_ID, timeout_commit="1s"):
-    """N independent validators of equal power sharing one byte-identical genesis (M2.4)."""
+def init_network(d, yap, cometbft, n, chain_id=DEFAULT_CHAIN_ID, timeout_commit="1s", fault_proxy=False,
+                 extra_accounts=None):
+    """N independent validators of equal power sharing one byte-identical genesis (M2.4).
+
+    fault_proxy: every directed P2P link i->j goes through its own port of the netfault proxy (M2.5);
+    the proxy is started and stopped together with the network. extra_accounts: {address: yip} added
+    to the genesis (accounts whose keys the caller holds, e.g. the soak test's senders)."""
     if n < 2 or n > 16:
         raise LocalnetError("--validators must be 1 or 2..16")
     d = os.path.abspath(d)
@@ -362,6 +367,8 @@ def init_network(d, yap, cometbft, n, chain_id=DEFAULT_CHAIN_ID, timeout_commit=
         cmd += ["--validator", f"{x['validator_pubkey']}:{VALIDATOR_POWER}:{addrs[rewards[x['index']]]}:{x['moniker']}"]
     for name, amount in NETWORK_ACCOUNTS.items():
         cmd += ["--account", f"{addrs[name]}={amount}"]
+    for addr, amount in (extra_accounts or {}).items():
+        cmd += ["--account", f"{addr}={amount}"]
     run(cmd)
     genesis_hash = kv(run([yap, "genesis", "hash", yap_genesis])).get("genesis_hash", "")
 
@@ -378,17 +385,18 @@ def init_network(d, yap, cometbft, n, chain_id=DEFAULT_CHAIN_ID, timeout_commit=
 
     # 5. config.toml: loopback ports, every other validator as a persistent peer. Several nodes share
     #    127.0.0.1, so allow_duplicate_ip and a non-strict address book are required.
-    ports = free_ports(2 * n)
+    ports = free_ports(2 * n + (n * (n - 1) if fault_proxy else 0))
     for x in nodes:
         x["rpc_port"], x["p2p_port"] = ports[2 * x["index"]], ports[2 * x["index"] + 1]
+    links = []
+    if fault_proxy:
+        spare = iter(ports[2 * n:])
+        for x in nodes:
+            for y in nodes:
+                if x is not y:
+                    links.append({"src": x["index"], "dst": y["index"], "port": next(spare), "target": y["p2p_port"]})
     for x in nodes:
-        peers = ",".join(f"{y['node_id']}@127.0.0.1:{y['p2p_port']}" for y in nodes if y is not x)
-        settings = common_settings(x["socket"], x["moniker"], x["rpc_port"], x["p2p_port"], timeout_commit) + [
-            ("p2p", "persistent_peers", f'"{peers}"'),
-            ("p2p", "allow_duplicate_ip", "true"),
-            ("p2p", "addr_book_strict", "false"),
-        ]
-        patch_config(os.path.join(x["cometbft_home"], "config", "config.toml"), settings)
+        write_node_config(x, nodes, links, timeout_commit)
 
     # 6. Metadata: per node (same keys as a single-validator localnet) and for the network.
     for x in nodes:
@@ -417,13 +425,88 @@ def init_network(d, yap, cometbft, n, chain_id=DEFAULT_CHAIN_ID, timeout_commit=
         x["rpc"] = meta["rpc"]
         x["reward_address"] = meta["reward_address"]
         del x["pub_key_b64"]
+    for x in nodes:
+        x["validator"] = True
     net = {"chain_id": chain_id, "genesis_time_ms": genesis_ms, "genesis_hash": genesis_hash,
            "genesis_sha256": hashlib.sha256(genesis_bytes).hexdigest(), "validators": n,
            "wallet_home": wallet, "password_file": password, "yap_genesis": yap_genesis,
-           "addresses": addrs, "nodes": nodes}
+           "addresses": addrs, "nodes": nodes, "fault_proxy": fault_proxy, "links": links,
+           "timeout_commit": timeout_commit}
     with open(os.path.join(d, "network.json"), "w") as f:
         json.dump(net, f, indent=2)
     return net
+
+
+def write_node_config(x, peers_from, links, timeout_commit):
+    """config.toml of a network node: loopback ports, persistent peers (through the fault proxy when
+    `links` is not empty). Several nodes share 127.0.0.1, so allow_duplicate_ip and a non-strict
+    address book are required."""
+    by_link = {(l["src"], l["dst"]): l["port"] for l in links}
+    peers = []
+    for y in peers_from:
+        if y["index"] == x["index"]:
+            continue
+        port = by_link.get((x["index"], y["index"]), y["p2p_port"])
+        peers.append(f"{y['node_id']}@127.0.0.1:{port}")
+    settings = common_settings(x["socket"], x["moniker"], x["rpc_port"], x["p2p_port"], timeout_commit) + [
+        ("p2p", "persistent_peers", f'"{",".join(peers)}"'),
+        ("p2p", "allow_duplicate_ip", "true"),
+        ("p2p", "addr_book_strict", "false"),
+    ]
+    if links:  # fast redial after an injected outage (the default backoff grows to minutes)
+        settings.append(("p2p", "persistent_peers_max_dial_period", '"2s"'))
+    patch_config(os.path.join(x["cometbft_home"], "config", "config.toml"), settings)
+
+
+def add_full_node(d, cometbft):
+    """A non-validator full node (M2.5): its own CometBFT home and keys (its validator key is in no
+    validator set), its own yapd home, the network's genesis.json copied byte for byte, the
+    validators as persistent peers (through the proxy if the network has one). Nothing else is
+    copied: its databases start empty and fill from genesis through blocksync."""
+    d = os.path.abspath(d)
+    net = load_network(d)
+    i = len(net["nodes"])
+    nd = os.path.join(d, f"node{i}")
+    os.makedirs(nd, mode=0o700)
+    yapd_home = os.path.join(nd, "yapd")
+    os.makedirs(yapd_home, mode=0o700)
+    cmt_home = os.path.join(nd, "cometbft")
+    pv, node_id = cometbft_init(cometbft, cmt_home)
+    with open(os.path.join(net["nodes"][0]["cometbft_home"], "config", "genesis.json"), "rb") as f:
+        genesis_bytes = f.read()
+    if hashlib.sha256(genesis_bytes).hexdigest() != net["genesis_sha256"]:
+        raise LocalnetError("node0 genesis.json changed")
+    with open(os.path.join(cmt_home, "config", "genesis.json"), "wb") as f:
+        f.write(genesis_bytes)
+    validators = [x for x in net["nodes"] if x.get("validator", True)]
+    if pv["address"] in {x["validator_address"] for x in validators}:
+        raise LocalnetError("full node key collides with a validator")
+    x = {"index": i, "dir": nd, "moniker": f"fullnode-{i}", "cometbft_home": cmt_home, "yapd_home": yapd_home,
+         "socket": os.path.join(yapd_home, "yapd.sock"), "node_id": node_id, "validator_address": pv["address"],
+         "validator": False}
+    ports = free_ports(2 + (len(validators) if net.get("fault_proxy") else 0))
+    x["rpc_port"], x["p2p_port"] = ports[0], ports[1]
+    new_links = []
+    if net.get("fault_proxy"):
+        for k, y in enumerate(validators):
+            new_links.append({"src": i, "dst": y["index"], "port": ports[2 + k], "target": y["p2p_port"]})
+    write_node_config(x, validators, new_links, net.get("timeout_commit", "1s"))
+    meta = {"chain_id": net["chain_id"], "genesis_time_ms": net["genesis_time_ms"],
+            "genesis_hash": net["genesis_hash"], "rpc": f"http://127.0.0.1:{x['rpc_port']}",
+            "p2p_port": x["p2p_port"], "socket": x["socket"], "cometbft_home": cmt_home, "yapd_home": yapd_home,
+            "wallet_home": net["wallet_home"], "password_file": net["password_file"],
+            "yap_genesis": net["yap_genesis"], "addresses": net["addresses"], "node_id": node_id, "index": i,
+            "moniker": x["moniker"], "validator": False, "validator_address": pv["address"]}
+    with open(os.path.join(nd, "localnet.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+    x["rpc"] = meta["rpc"]
+    net["nodes"].append(x)
+    net["links"] = net.get("links", []) + new_links
+    with open(os.path.join(d, "network.json"), "w") as f:
+        json.dump(net, f, indent=2)
+    if net.get("fault_proxy") and _pid(d, "netfault"):
+        fault(d, {"cmd": "reload"})
+    return x
 
 
 # ------------------------------------------------------------------ processes
@@ -544,12 +627,46 @@ def stop_process(d, name, timeout=30):
 
 def stop(d):
     """Stops one node (a node directory) or every node of a network. CometBFT first: it must not see
-    the application disappear while it is running."""
+    the application disappear while it is running. The fault proxy (if any) last."""
     nodes = node_dirs(d)
     for nd in nodes:
         stop_process(nd, "cometbft")
     for nd in nodes:
         stop_process(nd, "yapd")
+    if is_network(d):
+        stop_process(d, "netfault")
+
+
+NETFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netfault.py")
+
+
+def has_fault_proxy(d):
+    return is_network(d) and load_network(d).get("fault_proxy", False)
+
+
+def start_fault_proxy(d, die_with_parent=False, seed=None):
+    """Starts the netfault proxy of a network created with fault_proxy (no-op otherwise)."""
+    if not has_fault_proxy(d) or _pid(d, "netfault"):
+        return None
+    cmd = [sys.executable, "-I", NETFAULT, "serve", "--dir", d] + (["--seed", str(seed)] if seed is not None else [])
+    p = _spawn(d, "netfault", cmd, None, die_with_parent)
+    sys.path.insert(0, os.path.dirname(NETFAULT))
+    import netfault
+    try:
+        netfault.wait_ready(d)
+    except RuntimeError as e:
+        raise LocalnetError(str(e)) from None
+    return p
+
+
+def fault(d, req):
+    """One control command to the running fault proxy (see netfault.py)."""
+    sys.path.insert(0, os.path.dirname(NETFAULT))
+    import netfault
+    try:
+        return netfault.ctl(d, req)
+    except (OSError, RuntimeError, ValueError) as e:
+        raise LocalnetError(f"fault proxy: {e}") from None
 
 
 def kill_all(d):
@@ -558,8 +675,8 @@ def kill_all(d):
         nodes = node_dirs(d)
     except (OSError, ValueError, KeyError):
         nodes = [d]
-    for nd in nodes:
-        for name in ("cometbft", "yapd"):
+    for nd, names in [(nd, ("cometbft", "yapd")) for nd in nodes] + [(d, ("netfault",))]:
+        for name in names:
             try:
                 pid = _pid(nd, name)
                 if pid:
@@ -590,7 +707,7 @@ def status(d):
     out = []
     for nd in node_dirs(d):
         meta = load_meta(nd)
-        row = {"node": meta.get("moniker", "validator-1"), "rpc": meta["rpc"],
+        row = {"node": meta.get("moniker", "validator-1"), "validator": meta.get("validator", True), "rpc": meta["rpc"],
                "yapd_pid": _pid(nd, "yapd"), "cometbft_pid": _pid(nd, "cometbft")}
         try:
             st = rpc(meta, "status")
@@ -620,6 +737,7 @@ def main(argv):
     i.add_argument("--chain-id", default=DEFAULT_CHAIN_ID)
     i.add_argument("--validators", type=int, default=1, help="1 (default) or 2..16 independent validators")
     i.add_argument("--timeout-commit", default="1s")
+    i.add_argument("--fault-proxy", action="store_true", help="route every P2P link through the netfault proxy")
     s = sub.add_parser("start")
     s.add_argument("--dir", required=True)
     s.add_argument("--yapd", required=True)
@@ -631,12 +749,21 @@ def main(argv):
     t.add_argument("--node", type=int, help="stop only this node; its data is kept")
     st = sub.add_parser("status")
     st.add_argument("--dir", required=True)
+    an = sub.add_parser("add-node", help="add a non-validator full node (not started)")
+    an.add_argument("--dir", required=True)
+    an.add_argument("--cometbft", required=True)
+    fl = sub.add_parser("fault", help="send a JSON command to the fault proxy, e.g. '{\"cmd\": \"heal\"}'")
+    fl.add_argument("--dir", required=True)
+    fl.add_argument("json")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "build-cometbft":
             build_cometbft(a.deps_dir, a.download, a.out)
         elif a.cmd == "init":
-            meta = init(a.dir, a.yap, a.cometbft, a.chain_id, a.timeout_commit, a.validators)
+            if a.fault_proxy and a.validators < 2:
+                raise LocalnetError("--fault-proxy needs --validators >= 2")
+            meta = (init_network(a.dir, a.yap, a.cometbft, a.validators, a.chain_id, a.timeout_commit, True)
+                    if a.fault_proxy else init(a.dir, a.yap, a.cometbft, a.chain_id, a.timeout_commit, a.validators))
             if a.validators == 1:
                 print(json.dumps({k: meta[k] for k in ("chain_id", "rpc", "socket", "addresses")}, indent=2))
             else:
@@ -647,6 +774,7 @@ def main(argv):
                                  indent=2))
         elif a.cmd == "start":
             nodes = [node_dir(a.dir, a.node)] if a.node is not None else node_dirs(a.dir)
+            start_fault_proxy(os.path.abspath(a.dir))
             for nd in nodes:
                 start_yapd(nd, a.yapd)
             for nd in nodes:
@@ -662,6 +790,11 @@ def main(argv):
                 stop(a.dir)
         elif a.cmd == "status":
             print(json.dumps(status(a.dir), indent=2))
+        elif a.cmd == "add-node":
+            x = add_full_node(a.dir, a.cometbft)
+            print(json.dumps({k: x[k] for k in ("moniker", "dir", "rpc", "node_id")}, indent=2))
+        elif a.cmd == "fault":
+            print(json.dumps(fault(os.path.abspath(a.dir), json.loads(a.json)), indent=2))
     except (LocalnetError, OSError) as e:
         print(f"localnet: {e}", file=sys.stderr)
         return 1
