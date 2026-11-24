@@ -9,6 +9,7 @@
 #include "yap/common/fail_stop.hpp"
 #include "yap/common/hex.hpp"
 #include "yap/crypto/address.hpp"
+#include "yap/crypto/hash.hpp"
 #include "yap/dev/dev_chain.hpp"
 #include "yap/state/state.hpp"
 
@@ -43,10 +44,24 @@ void query_error(pb::ResponseQuery& r, QueryCode code, const std::string& log) {
 
 std::string u64s(std::uint64_t v) { return std::to_string(v); }  // u64 as decimal strings, like genesis JSON
 
-std::string votes_summary(const pb::CommitInfo& c) {
-    std::string s = "votes=" + std::to_string(c.votes_size()) + " flags=";
-    for (const auto& v : c.votes()) s += std::to_string(static_cast<int>(v.block_id_flag()));
-    return s;
+std::string hex_bytes(const std::string& b) { return to_hex(ByteView(reinterpret_cast<const Byte*>(b.data()), b.size())); }
+
+// Public consensus data only: validator addresses, powers and BlockIDFlags (1 absent, 2 commit, 3 nil).
+template <class Commit>
+std::string votes_summary(const Commit& c) {
+    std::string flags;
+    std::string list;
+    for (const auto& v : c.votes()) {
+        flags += std::to_string(static_cast<int>(v.block_id_flag()));
+        if (!list.empty()) list += ',';
+        list += hex_bytes(v.validator().address()) + ":" + std::to_string(v.validator().power()) + ":" +
+                std::to_string(static_cast<int>(v.block_id_flag()));
+    }
+    return "votes=" + std::to_string(c.votes_size()) + " flags=" + flags + " commit=[" + list + "]";
+}
+
+std::string tx_hash_hex(const std::string& tx) {  // CometBFT's transaction hash: SHA-256 of the bytes
+    return to_hex(crypto::sha256(ByteView(reinterpret_cast<const Byte*>(tx.data()), tx.size())));
 }
 
 std::string trace_line(const pb::Request& r) {
@@ -61,18 +76,21 @@ std::string trace_line(const pb::Request& r) {
         case pb::Request::kQuery: return "Query path=" + r.query().path();
         case pb::Request::kCheckTx:
             return std::string("CheckTx type=") + (r.check_tx().type() == pb::RECHECK ? "RECHECK" : "NEW") +
-                   " bytes=" + std::to_string(r.check_tx().tx().size());
+                   " bytes=" + std::to_string(r.check_tx().tx().size()) + " hash=" + tx_hash_hex(r.check_tx().tx());
         case pb::Request::kPrepareProposal:
             return "PrepareProposal height=" + std::to_string(r.prepare_proposal().height()) +
+                   " proposer=" + hex_bytes(r.prepare_proposal().proposer_address()) +
                    " txs=" + std::to_string(r.prepare_proposal().txs_size()) +
-                   " max_tx_bytes=" + std::to_string(r.prepare_proposal().max_tx_bytes()) +
-                   " local_votes=" + std::to_string(r.prepare_proposal().local_last_commit().votes_size());
+                   " max_tx_bytes=" + std::to_string(r.prepare_proposal().max_tx_bytes()) + " local_" +
+                   votes_summary(r.prepare_proposal().local_last_commit());
         case pb::Request::kProcessProposal:
             return "ProcessProposal height=" + std::to_string(r.process_proposal().height()) +
+                   " proposer=" + hex_bytes(r.process_proposal().proposer_address()) +
                    " txs=" + std::to_string(r.process_proposal().txs_size()) + " " +
                    votes_summary(r.process_proposal().proposed_last_commit());
         case pb::Request::kFinalizeBlock:
             return "FinalizeBlock height=" + std::to_string(r.finalize_block().height()) +
+                   " proposer=" + hex_bytes(r.finalize_block().proposer_address()) +
                    " time=" + std::to_string(r.finalize_block().time().seconds()) + "." +
                    std::to_string(r.finalize_block().time().nanos()) +
                    " txs=" + std::to_string(r.finalize_block().txs_size()) + " " +
@@ -110,10 +128,25 @@ void Application::handle(const pb::Request& request, pb::Response& response) {
     if (opts_.trace) log("ABCI " + trace_line(request));
     try {
         dispatch(request, response);
+        if (opts_.trace) trace_result(request, response);
     } catch (const std::exception& e) {
         failure_ = e.what();
         log("FATAL: " + *failure_);
         throw;
+    }
+}
+
+void Application::trace_result(const pb::Request& req, const pb::Response& resp) const {
+    switch (req.value_case()) {
+        case pb::Request::kCheckTx:
+            log("ABCI CheckTx result code=" + std::to_string(resp.check_tx().code()));
+            return;
+        case pb::Request::kProcessProposal:
+            log(std::string("ABCI ProcessProposal result ") +
+                (resp.process_proposal().status() == pb::ResponseProcessProposal::ACCEPT ? "ACCEPT" : "REJECT"));
+            return;
+        default:
+            return;
     }
 }
 
@@ -331,8 +364,12 @@ void Application::prepare_proposal(const pb::RequestPrepareProposal& req, pb::Re
 
 void Application::process_proposal(const pb::RequestProcessProposal& req, pb::ResponseProcessProposal& r) const {
     const auto ctx = block_context(engine_.meta().chain_id, req);
-    r.set_status(engine_.process_proposal(ctx) ? pb::ResponseProcessProposal::ACCEPT
-                                               : pb::ResponseProcessProposal::REJECT);
+    const bool accept = engine_.process_proposal(ctx);
+    r.set_status(accept ? pb::ResponseProcessProposal::ACCEPT : pb::ResponseProcessProposal::REJECT);
+    if (!accept) {
+        log("ProcessProposal: REJECT height " + std::to_string(req.height()) + " from proposer " +
+            hex_bytes(req.proposer_address()) + " (a transaction is invalid)");
+    }
 }
 
 void Application::finalize_block(const pb::RequestFinalizeBlock& req, pb::ResponseFinalizeBlock& r) {

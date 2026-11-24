@@ -45,6 +45,7 @@ public:
 
 private:
     void dispatch(const tendermint::abci::Request& req, tendermint::abci::Response& resp);
+    void trace_result(const tendermint::abci::Request& req, const tendermint::abci::Response& resp) const;
     void info(tendermint::abci::ResponseInfo& r) const;
     void init_chain(const tendermint::abci::RequestInitChain& req, tendermint::abci::ResponseInitChain& r);
     void query(const tendermint::abci::RequestQuery& req, tendermint::abci::ResponseQuery& r) const;

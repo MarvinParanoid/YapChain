@@ -82,6 +82,11 @@ if(YAP_BUILD_TESTS)
         COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_cometbft.py
                 $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN})
       set_tests_properties(integration:live_cometbft PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+      # Four independent validators (M2.4): consensus, distributed transactions, rewards, blocksync.
+      add_test(NAME integration:live_multival
+        COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_live_multival.py
+                $<TARGET_FILE:yap> $<TARGET_FILE:yapd> ${YAP_COMETBFT_BIN})
+      set_tests_properties(integration:live_multival PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
     endif()
   endif()
 
