@@ -1,0 +1,14 @@
+# ThreadSanitizer suppressions — third-party code only (LMDB 0.9.36, libraries/liblmdb/mdb.c).
+#
+# LMDB's reader table and meta pages are shared between threads AND processes through the mmapped
+# lock file. By design they are read without a mutex: a reader slot is claimed under the reader
+# mutex and published with aligned word writes ("other code uses the reader table un-mutexed",
+# mdb_txn_renew0), the writer scans it lock-free to find the oldest reader (mdb_find_oldest), and
+# meta pages are switched by txnid (mdb_env_write_meta). `me_live_reader` is a set-once flag.
+# TSan cannot model this protocol and reports these accesses as races (M2 regression, Clang 23:
+# every report had frame #0 in these functions; none in YapChain code). Only these functions are
+# suppressed; any race whose top frame is in our code is still reported.
+race:mdb_txn_renew0
+race:mdb_find_oldest
+race:mdb_env_write_meta
+race:mdb_txn_end
