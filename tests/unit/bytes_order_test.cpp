@@ -84,7 +84,10 @@ TEST_CASE("BytesLess agrees with the reference order and std::less and is a stri
     }
 }
 
-TEST_CASE("BytesLess sorts random keys exactly like std::less", "[common][bytes]") {
+// Against the independent reference, not std::less: sorting with std::less<Bytes> is exactly the code
+// in which GCC 14 at -O3 reports the false -Wstringop-overread (agreement with std::less is checked
+// pair by pair above).
+TEST_CASE("BytesLess sorts random keys exactly like the reference order", "[common][bytes]") {
     std::mt19937_64 rng(0x5eed);
     std::vector<Bytes> keys;
     for (int i = 0; i < 3000; ++i) {
@@ -95,7 +98,7 @@ TEST_CASE("BytesLess sorts random keys exactly like std::less", "[common][bytes]
     auto ours = keys;
     auto theirs = keys;
     std::sort(ours.begin(), ours.end(), BytesLess{});
-    std::sort(theirs.begin(), theirs.end(), std::less<Bytes>{});
+    std::sort(theirs.begin(), theirs.end(), reference_less);
     CHECK(ours == theirs);
 }
 

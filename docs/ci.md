@@ -95,6 +95,54 @@ ASan+UBSan и только ASan (`-DYAP_SANITIZE_UBSAN=OFF`), варианты `
 extended-прогонов не обязательны для начала миграции на C++23, но подтверждённые в них дефекты безопасности или
 корректности разбираются отдельно.
 
+## GCC 14 ICE в заголовках Abseil (M2.6.1b)
+**Наблюдение** (run 45707038403, `0cbf544`): обе сборки GCC 14 Release (x86_64 и aarch64) падают с
+`internal compiler error: Segmentation fault` в `absl/functional/internal/any_invocable.h:765` при компиляции
+`src/abci/server.cpp` и `src/abci/convert.cpp`; backtrace: `build_x_conditional_expr` → `operand_equal_p`.
+
+**Причина (подтверждена воспроизведением).** Ошибка компилятора GCC 14.2: проверка `-Wduplicated-branches`
+падает на условном выражении с одинаковыми ветками `void()` внутри шаблона. Под `NDEBUG` Abseil раскрывает
+`ABSL_ASSERT(e)` в `(decltype((void)((e) ? void() : void()))())`, и `ABSL_HARDENING_ASSERT` в
+`InvokedAfterMove` шаблона `Impl` даёт ровно такую форму. Воспроизведено в изолированном Ubuntu 24.04
+(rootfs `ubuntu-base-24.04.5`, подпись и SHA-256 проверены; `bwrap` без root) с тем же
+`g++-14 (Ubuntu 14.2.0-4ubuntu2~24.04.1) 14.2.0`, что в CI, с исходной командой компиляции из лога CI:
+
+| Вариант команды (`server.cpp` и `convert.cpp`) | Результат |
+|---|---|
+| исходная (`-O3 -DNDEBUG … -Wduplicated-branches … -Werror`) | ICE, exit 1 (тот же backtrace, те же адреса, что в CI) |
+| исходная + `-Wno-duplicated-branches` | exit 0 |
+| исходная без `-DNDEBUG` (только для диагностики) | exit 0 |
+| исходная с `-O0` вместо `-O3` | ICE — оптимизация ни при чём, падает разбор C++ |
+
+Минимальный воспроизводитель (C++17, C++20 и C++23 одинаково):
+
+```cpp
+template <class T>
+void f() { true ? void() : void(); }
+```
+
+`g++-14 -std=c++20 -Wduplicated-branches -fsyntax-only r.cpp` — ICE; без шаблона — обычное предупреждение;
+GCC 13.3 (`13.3.0-6ubuntu2~24.04.1`) и GCC 16.2 — предупреждение, без падения; `-Wall -Wextra` без
+`-Wduplicated-branches` — без падения. Исправлен ли баг в GCC 14.3+, не проверялось.
+
+**Обход** (`cmake/Protobuf.cmake`): `-Wno-duplicated-branches` как INTERFACE-опция цели сгенерированных
+привязок `yap_abci_proto` — получают только единицы, видящие заголовки protobuf/Abseil (`yap_abci`,
+`yap_abci_app`, `yapd`, тесты и fuzz-цели ABCI), и только при GCC 14.x и конфигурациях с `NDEBUG` (Release,
+RelWithDebInfo, MinSizeRel). Предупреждение остаётся во всём остальном коде, в Debug/ASan/TSan, у GCC 13, GCC
+15+ и Clang. `-O3`, `NDEBUG`, `-Werror` и остальные предупреждения не меняются; Abseil и protobuf не
+модифицируются, версии зависимостей и компиляторов те же.
+
+**Условия удаления:** GCC 14 перестаёт быть поддерживаемым компилятором или GCC 14 в CI больше не падает на
+минимальном воспроизводителе.
+
+**Ложные `-Wstringop-overread` GCC 14 при `-O3`** (сравнение `std::vector<unsigned char>` через
+`std::less`/`operator<=>`, M2.6.1a): в рабочем коде заменены на `yap::BytesLess` (тот же порядок). Полная сборка
+GCC 14.2 Release в том же изолированном Ubuntu 24.04 (до неё CI не доходил из-за ICE) нашла ещё шесть единиц —
+только тесты: вспомогательные `std::map<Bytes, Bytes>` в `tests/support/ledger_fixture.hpp`,
+`tests/unit/{ledger,storage,recovery,dev_chain}_test.cpp`, `tests/vectors/economics_vectors_test.cpp` и
+сортировка по `std::less<Bytes>` в `tests/unit/bytes_order_test.cpp`. Они тоже используют `BytesLess`; проверки
+не менялись, предупреждения не подавлялись.
+
 ## Живые тесты и TSan (M2.6.1)
 Задания на x86_64 (`ubuntu-24.04`), в дополнение к 11 заданиям build/test, где живые тесты не регистрируются:
 

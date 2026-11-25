@@ -173,14 +173,14 @@ TEST_CASE("overlay semantics", "[ledger][kv]") {
     o.erase({1});
     CHECK_FALSE(o.get(Bytes{1}).has_value());
     CHECK(o.get(Bytes{2}) == Bytes{20});
-    CHECK(dump(o) == std::map<Bytes, Bytes>{{{2}, {20}}, {{3}, {30}}});
+    CHECK(dump(o) == std::map<Bytes, Bytes, BytesLess>{{{2}, {20}}, {{3}, {30}}});
     state::Overlay nested(&o);
     nested.put({2}, {21});
     state::Overlay unrelated(&store);
     CHECK_THROWS_AS(nested.merge_into(unrelated), std::logic_error);
     nested.merge_into(o);
     o.apply_to(store);
-    CHECK(dump(store) == std::map<Bytes, Bytes>{{{2}, {21}}, {{3}, {30}}});
+    CHECK(dump(store) == std::map<Bytes, Bytes, BytesLess>{{{2}, {21}}, {{3}, {30}}});
 }
 
 TEST_CASE("invariant 4 is checked in full", "[ledger][invariants][audit]") {

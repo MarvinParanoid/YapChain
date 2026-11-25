@@ -14,8 +14,8 @@ using dev::Reject;
 
 namespace {
 
-std::map<Bytes, Bytes> dump_all(const storage::KvStore& s) {
-    std::map<Bytes, Bytes> out;
+std::map<Bytes, Bytes, BytesLess> dump_all(const storage::KvStore& s) {
+    std::map<Bytes, Bytes, BytesLess> out;
     for (std::size_t t = 0; t < storage::kTableCount; ++t) {
         s.for_each(static_cast<storage::Table>(t), [&](const Bytes& k, const Bytes& v) {
             Bytes key{static_cast<Byte>(t)};

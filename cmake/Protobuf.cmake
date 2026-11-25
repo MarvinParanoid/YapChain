@@ -133,4 +133,13 @@ add_library(yap_abci_proto STATIC ${_yap_gen_srcs})
 target_include_directories(yap_abci_proto SYSTEM PUBLIC "${_yap_gen}")
 target_link_libraries(yap_abci_proto PUBLIC protobuf::libprotobuf)
 target_compile_options(yap_abci_proto PRIVATE -w)
+# Workaround (docs/ci.md, "GCC 14 ICE"): GCC 14.2 crashes (internal compiler error in
+# operand_equal_p) when -Wduplicated-branches meets `c ? void() : void()` inside a template, which is
+# what ABSL_ASSERT expands to under NDEBUG in absl/functional/internal/any_invocable.h. GCC 13.3 and
+# GCC 16 do not crash. Scope: only code that sees the protobuf/abseil headers (consumers of these
+# bindings), only GCC 14.x, only the configurations that define NDEBUG; the warning stays on
+# everywhere else, -O3/NDEBUG/-Werror are unchanged. Remove when GCC 14 is no longer a supported
+# compiler or the GCC 14 used by CI no longer crashes on the reproducer in docs/ci.md.
+target_compile_options(yap_abci_proto INTERFACE
+  "$<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_GREATER_EQUAL:$<CXX_COMPILER_VERSION>,14>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,15>,$<CONFIG:Release,RelWithDebInfo,MinSizeRel>>:-Wno-duplicated-branches>")
 add_library(yap::abci_proto ALIAS yap_abci_proto)

@@ -15,8 +15,8 @@ using namespace yap::storage;
 
 namespace {
 
-std::map<Bytes, Bytes> dump(const KvStore& s, Table t) {
-    std::map<Bytes, Bytes> out;
+std::map<Bytes, Bytes, BytesLess> dump(const KvStore& s, Table t) {
+    std::map<Bytes, Bytes, BytesLess> out;
     s.for_each(t, [&](const Bytes& k, const Bytes& v) { out.emplace(k, v); });
     return out;
 }

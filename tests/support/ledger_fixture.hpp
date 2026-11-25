@@ -57,8 +57,8 @@ inline Bytes burn_tx(const crypto::SecretKey& from, std::uint64_t amount, std::u
 }
 
 /// Full dump of a view, for byte-exact comparisons.
-inline std::map<Bytes, Bytes> dump(const state::KvReader& kv) {
-    std::map<Bytes, Bytes> out;
+inline std::map<Bytes, Bytes, BytesLess> dump(const state::KvReader& kv) {
+    std::map<Bytes, Bytes, BytesLess> out;
     kv.for_each([&out](const Bytes& k, const Bytes& v) { out.emplace(k, v); });
     return out;
 }

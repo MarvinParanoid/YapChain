@@ -66,7 +66,7 @@ TEST_CASE("emission vectors (protocol §9.5)", "[vectors][economics]") {
         CHECK(state::apply_block_reward(bst, commit, events) == ju64(c.at("minted")));
 
         // Exactly the expected accounts were credited; no zero-balance accounts appeared.
-        std::map<Bytes, Bytes> expected = before;
+        std::map<Bytes, Bytes, BytesLess> expected = before;
         for (const auto& cr : c.at("credits")) {
             const auto id = jhexn<32>(cr.at("account_id"));
             const auto old = state::State(block).account(id);  // after; compare amounts below
