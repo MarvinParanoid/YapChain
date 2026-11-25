@@ -31,7 +31,7 @@ public:
     [[nodiscard]] bool empty() const noexcept { return data_.empty(); }
 
 private:
-    std::map<Bytes, Bytes> data_;
+    std::map<Bytes, Bytes, BytesLess> data_;
 };
 
 /// Buffer of changes on top of a base view (docs/protocol.md §7.5). Reads see own writes first.
@@ -59,12 +59,12 @@ public:
     void apply_to(MemoryKvStore& store);
     [[nodiscard]] bool empty() const noexcept { return changes_.empty(); }
     /// The pending changes in ascending key order (nullopt = deletion).
-    [[nodiscard]] const std::map<Bytes, std::optional<Bytes>>& changes() const noexcept { return changes_; }
+    [[nodiscard]] const std::map<Bytes, std::optional<Bytes>, BytesLess>& changes() const noexcept { return changes_; }
     [[nodiscard]] const KvReader* base() const noexcept { return base_; }
 
 private:
     const KvReader* base_;
-    std::map<Bytes, std::optional<Bytes>> changes_;  // nullopt = deleted
+    std::map<Bytes, std::optional<Bytes>, BytesLess> changes_;  // nullopt = deleted
 };
 
 }  // namespace yap::state

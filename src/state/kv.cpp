@@ -6,7 +6,7 @@
 namespace yap::state {
 
 std::optional<Bytes> MemoryKvStore::get(ByteView key) const {
-    auto it = data_.find(Bytes(key.begin(), key.end()));
+    auto it = data_.find(key);
     if (it == data_.end()) return std::nullopt;
     return it->second;
 }
@@ -19,14 +19,14 @@ void MemoryKvStore::put(Bytes key, Bytes value) { data_[std::move(key)] = std::m
 void MemoryKvStore::erase(const Bytes& key) { data_.erase(key); }
 
 std::optional<Bytes> Overlay::get(ByteView key) const {
-    auto it = changes_.find(Bytes(key.begin(), key.end()));
+    auto it = changes_.find(key);
     if (it != changes_.end()) return it->second;
     return base_->get(key);
 }
 
 void Overlay::for_each(const std::function<void(const Bytes&, const Bytes&)>& fn) const {
     // Merge two ordered sequences: base entries and local changes (local wins).
-    std::map<Bytes, Bytes> merged;
+    std::map<Bytes, Bytes, BytesLess> merged;
     base_->for_each([&merged](const Bytes& k, const Bytes& v) { merged.emplace(k, v); });
     for (const auto& [k, v] : changes_) {
         if (v) {

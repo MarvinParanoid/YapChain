@@ -8,6 +8,7 @@ if(YAP_BUILD_TESTS)
 
   add_executable(yap_unit_tests
     unit/common_test.cpp
+    unit/bytes_order_test.cpp
     unit/ycs_test.cpp
     unit/hash_test.cpp
     unit/ed25519_test.cpp

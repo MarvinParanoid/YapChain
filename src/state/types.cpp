@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "yap/state/types.hpp"
 
+#include <algorithm>
+
 #include "yap/crypto/hash.hpp"
 
 namespace yap::state {
@@ -98,11 +100,12 @@ ConsensusAddress consensus_address(const crypto::PublicKey& pubkey) {
 
 namespace key {
 namespace {
+// Sized once, then filled: the reserve + push_back form made GCC 14 at -O3 report a false
+// -Wfree-nonheap-object on the (unreachable) reallocation path.
 Bytes with_ns(Byte ns, ByteView id) {
-    Bytes k;
-    k.reserve(1 + id.size());
-    k.push_back(ns);
-    k.insert(k.end(), id.begin(), id.end());
+    Bytes k(1 + id.size());
+    k[0] = ns;
+    std::copy(id.begin(), id.end(), k.begin() + 1);
     return k;
 }
 }  // namespace
