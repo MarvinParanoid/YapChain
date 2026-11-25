@@ -129,6 +129,7 @@ if(YAP_BUILD_TESTS)
     add_test(NAME cli:net_config COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_config.py $<TARGET_FILE:yap>)
     add_test(NAME cli:net_queries COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_queries.py $<TARGET_FILE:yap>)
     add_test(NAME cli:net_send COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_send.py $<TARGET_FILE:yap>)
+    add_test(NAME cli:net_wait COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_wait.py $<TARGET_FILE:yap>)
   endif()
 
   # Crash-recovery tests fork child processes that are killed with SIGKILL.

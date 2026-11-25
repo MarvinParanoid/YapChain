@@ -434,6 +434,8 @@ tx::SignedTx check_local(const NetworkConfig& cfg, ByteView bytes, bool skip_sig
     return std::move(*stx);
 }
 
+void wait_final(Session& s, Report& r, const Hash32& hash, std::optional<std::uint64_t> expires, const SendOptions& o);
+
 /// Sends once with broadcast_tx_sync and reports what is known. Never re-sends.
 void broadcast_and_report(Session& s, Report& r, ByteView bytes, std::optional<std::uint64_t> expires,
                           const SendOptions& o) {
@@ -463,6 +465,7 @@ void broadcast_and_report(Session& s, Report& r, ByteView bytes, std::optional<s
         }
         // The node has seen these exact bytes before (executed, or still in a mempool somewhere).
         r.str("status", "already_known");
+        if (o.wait) return wait_final(s, r, hash, expires, o);
         if (const auto t = s.client->tx(hash)) {
             report_finalized(r, s.cfg, *t);
             r.finish();
@@ -486,10 +489,12 @@ void broadcast_and_report(Session& s, Report& r, ByteView bytes, std::optional<s
         throw ReportedError(kExitRejected, "rejected by CheckTx: " + std::string(tx::to_string(static_cast<tx::TxCode>(br.code))));
     }
     r.str("status", "accepted_mempool");
-    r.str("note", "accepted into the mempool of " + s.cfg.rpc.value + "; NOT final — confirm with `yap network tx " + hx + "`");
-    r.finish();
-    (void)expires;
-    (void)o;
+    if (!o.wait) {
+        r.str("note", "accepted into the mempool of " + s.cfg.rpc.value + "; NOT final — confirm with `yap network wait " + hx + "`");
+        r.finish();
+        return;
+    }
+    wait_final(s, r, hash, expires, o);
 }
 
 struct NewTxArgs {
@@ -531,7 +536,10 @@ void confirm(const NewTxArgs& a, const std::string& summary) {
     if (answer != "y" && answer != "Y" && answer != "yes") throw CliError(kExitRejected, "not signed");
 }
 
+void check_wait_options(const SendOptions& o);
+
 void cmd_new_tx(const Context& ctx, const NetState& st, const std::string& kind, const NewTxArgs& a, const SendOptions& o) {
+    check_wait_options(o);
     auto s = open_session(ctx, st);
     const auto status = check_identity(s, /*require=*/true);
     const auto [ph, params] = app_query(*s.client, "/params");
@@ -585,7 +593,10 @@ void cmd_new_tx(const Context& ctx, const NetState& st, const std::string& kind,
     broadcast_and_report(s, r, bytes, b.expires_at_height, o);
 }
 
+void check_wait_options(const SendOptions& o);
+
 void cmd_send(const Context& ctx, const NetState& st, const std::string& file, const SendOptions& o) {
+    check_wait_options(o);
     auto s = open_session(ctx, st);
     if (!s.cfg.has_chain_id()) (void)check_identity(s, true);  // explains how to set it
     const Bytes bytes = read_hex_file(file);
@@ -594,6 +605,92 @@ void cmd_send(const Context& ctx, const NetState& st, const std::string& file, c
     Report r(st.flags.json);
     describe_tx(r, s.cfg, bytes);
     broadcast_and_report(s, r, bytes, stx.body.expires_at_height, o);
+}
+
+// ------------------------------------------------------------------ confirmation (M2.6e)
+
+/// Polls the node's transaction index until the transaction is final, it provably can no longer be
+/// included (the node is past its expiry height), or the timeout. A timeout is NOT a rejection.
+/// Needs the node's tx indexer ("kv", the CometBFT default); the mempool is never relied upon.
+void wait_final(Session& s, Report& r, const Hash32& hash, std::optional<std::uint64_t> expires, const SendOptions& o) {
+    using Clock = std::chrono::steady_clock;
+    const std::string hx = upper_hex(hash);
+    const auto deadline = Clock::now() + std::chrono::seconds(o.wait_timeout_s);
+    std::uint64_t last_height = 0;
+    auto last_change = Clock::now();
+    bool stall_noted = false;
+    std::size_t errors = 0;
+    std::string last_error;
+    for (;;) {
+        try {
+            if (const auto t = s.client->tx(hash)) {
+                report_finalized(r, s.cfg, *t);
+                r.finish();
+                if (t->code != 0) {
+                    throw ReportedError(kExitTxFailed, "finalized at height " + std::to_string(t->height) +
+                                                           " with execution code " + std::to_string(t->code));
+                }
+                return;
+            }
+            const auto st = s.client->status();
+            if (st.latest_height != last_height) {
+                last_height = st.latest_height;
+                last_change = Clock::now();
+            } else if (!stall_noted && Clock::now() - last_change > std::chrono::seconds(10)) {
+                std::cerr << "note: no new block on the node for 10 s (consensus may be stalled); still waiting\n";
+                stall_noted = true;
+            }
+            if (expires && st.latest_height > *expires && !st.catching_up) {
+                r.str("status", "expired");
+                r.u64("node_height", st.latest_height);
+                r.u64("expires_at_height", *expires);
+                r.finish();
+                throw ReportedError(kExitRejected, "not executed: the node is at height " + std::to_string(st.latest_height) +
+                                                       " > expires_at_height " + std::to_string(*expires) +
+                                                       ", so it can no longer be included");
+            }
+        } catch (const rpc::RpcError& e) {
+            if (e.data().find("transaction indexing is disabled") != std::string::npos) {
+                throw CliError(kExitNetwork, "the node does not index transactions (tx_index.indexer = \"null\"); "
+                                             "confirmation needs a node with the \"kv\" indexer");
+            }
+            ++errors;
+            last_error = e.what();
+        } catch (const rpc::TransportError& e) {
+            ++errors;
+            last_error = e.what();
+        } catch (const rpc::MalformedResponse& e) {
+            ++errors;
+            last_error = e.what();
+        }
+        if (Clock::now() >= deadline) {
+            r.str("status", "unknown");
+            r.u64("waited_s", static_cast<std::uint64_t>(o.wait_timeout_s));
+            if (last_height != 0) r.u64("node_height", last_height);
+            if (errors != 0) r.str("last_rpc_error", last_error);
+            r.str("note", "not final within the timeout; this does NOT mean rejected — check again with "
+                          "`yap network tx " + hx + "` or `yap network wait " + hx + "`");
+            r.finish();
+            throw ReportedError(kExitUnknown, "not finalized within " + std::to_string(o.wait_timeout_s) + " s (outcome unknown)");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(o.poll_ms));
+    }
+}
+
+void check_wait_options(const SendOptions& o) {
+    if (o.wait_timeout_s < 1 || o.wait_timeout_s > 3600) throw CliError(kExitUsage, "the wait timeout must be 1..3600 s");
+    if (o.poll_ms < 100 || o.poll_ms > 60'000) throw CliError(kExitUsage, "the poll interval must be 100..60000 ms");
+}
+
+void cmd_wait(const Context& ctx, const NetState& st, const std::string& hash_text, const std::string& expires_text,
+              const SendOptions& o) {
+    check_wait_options(o);
+    auto s = open_session(ctx, st);
+    (void)check_identity(s, false);
+    const auto hash = parse_hash(hash_text);
+    Report r(st.flags.json);
+    r.str("hash", upper_hex(hash));
+    wait_final(s, r, hash, opt_decimal(expires_text, "--expires"), o);
 }
 
 void fallthrough_all(CLI::App* app) {
@@ -670,6 +767,12 @@ void register_network(CLI::App& app, Context& ctx) {
     snd->add_option("file", *sfile, "Signed transaction (hex), e.g. from `yap tx transfer --out`")->required();
     snd->add_flag("--skip-local-checks", sopts->skip_local_checks,
                   "Send even if the signature does not verify locally (to test a node; the chain id check stays)");
+    const auto add_wait = [](CLI::App* c, SendOptions& o) {
+        c->add_flag("--wait", o.wait, "Wait until the transaction is final (bounded by --wait-timeout)");
+        c->add_option("--wait-timeout", o.wait_timeout_s, "Seconds to wait for finalization (1..3600)")->capture_default_str();
+        c->add_option("--poll-ms", o.poll_ms, "Polling interval while waiting (100..60000 ms)")->capture_default_str();
+    };
+    add_wait(snd, *sopts);
     snd->callback([&ctx, st, sfile, sopts] { guarded(*st, [&] { cmd_send(ctx, *st, *sfile, *sopts); }, true); });
     for (const char* kind : {"transfer", "burn"}) {
         auto a = std::make_shared<NewTxArgs>();
@@ -687,9 +790,21 @@ void register_network(CLI::App& app, Context& ctx) {
         c->add_option("--memo", a->memo, "Memo text");
         c->add_option("--out", a->out, "Also write the signed transaction (hex) to this file");
         c->add_flag("--yes", a->yes, "Do not ask for confirmation (required when not on a terminal)");
+        add_wait(c, *o);
         const std::string k = kind;
         c->callback([&ctx, st, a, o, k] { guarded(*st, [&] { cmd_new_tx(ctx, *st, k, *a, *o); }, true); });
     }
+
+    auto whash = std::make_shared<std::string>();
+    auto wexp = std::make_shared<std::string>();
+    auto wopts = std::make_shared<SendOptions>();
+    auto* w = net->add_subcommand("wait", "Wait until a transaction is final (by hash; nothing is sent). A timeout "
+                                          "means unknown, not rejected (exit 8)");
+    w->add_option("hash", *whash, "Transaction hash")->required();
+    w->add_option("--expires", *wexp, "Its expires_at_height: lets the wait conclude 'expired' once the node is past it");
+    w->add_option("--timeout", wopts->wait_timeout_s, "Seconds to wait (1..3600)")->capture_default_str();
+    w->add_option("--poll-ms", wopts->poll_ms, "Polling interval (100..60000 ms)")->capture_default_str();
+    w->callback([&ctx, st, whash, wexp, wopts] { guarded(*st, [&] { cmd_wait(ctx, *st, *whash, *wexp, *wopts); }); });
 
     fallthrough_all(net);  // network options may also follow the subcommand
 }
