@@ -72,6 +72,7 @@ class MockRpc:
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.server.daemon_threads = True
+        self.server.handle_error = lambda *a: None  # clients that abort (TLS refusal, size limit) are expected
         if tls_context is not None:
             self.server.socket = tls_context.wrap_socket(self.server.socket, server_side=True)
         scheme = "https" if tls_context is not None else "http"
