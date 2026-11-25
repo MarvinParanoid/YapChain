@@ -1,9 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # ASan + UBSan for all code compiled by this project (libsodium is built separately
 # by ExternalProject and is not instrumented).
+# YAP_SANITIZE_UBSAN=OFF builds ASan alone: only for diagnosing sanitizer cost (docs/ci.md); every
+# regular configuration keeps ASan+UBSan.
+option(YAP_SANITIZE_UBSAN "With YAP_SANITIZE: also UndefinedBehaviorSanitizer" ON)
 if(YAP_SANITIZE)
+  if(YAP_SANITIZE_UBSAN)
+    set(_yap_san address,undefined)
+  else()
+    set(_yap_san address)
+  endif()
   set(YAP_SANITIZER_FLAGS
-    -fsanitize=address,undefined
+    -fsanitize=${_yap_san}
     -fno-sanitize-recover=all
     -fno-omit-frame-pointer)
   add_compile_options(${YAP_SANITIZER_FLAGS})

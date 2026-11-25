@@ -23,6 +23,10 @@ jobs:
         include:
           - { arch: x86_64,  runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
+          # GCC ASan on arm64 runs in-process tests ~90x slower than Clang ASan on the same runner
+          # (run 45450447412; cause under diagnosis: asan-arm64-diagnose.yml, docs/ci.md). Only here the
+          # long-running tests run at 25 % scale with the same checks; every other job runs them in full.
+          - { arch: aarch64, compiler: gcc, preset: asan, long_test_scale: 25 }
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +41,7 @@ jobs:
           fi
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DYAP_LONG_TEST_SCALE_PERCENT=${{ matrix.long_test_scale || 100 }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}

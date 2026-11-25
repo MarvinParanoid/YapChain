@@ -11,6 +11,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <random>
 
@@ -180,10 +182,16 @@ TEST_CASE("repeated crashes at random points converge to the uninterrupted chain
 TEST_CASE("long run: 1000 blocks, 10000+ transactions, restarts, crashes, Memory == LMDB", "[crash][lmdb][long]") {
     // The journal carries the roots of an uninterrupted MemoryStore run, so every replayed LMDB
     // block is compared with it (replay refuses to commit a diverging height).
-    static const Reference ref(1000, 11, 4242);
+    // YAP_LONG_TEST_SCALE_PERCENT (CMake, default 100) shortens the run for a configuration that is
+    // too slow for the full one (docs/ci.md); the checks per block, the crash points and the
+    // restarts are the same, only the number of blocks (>= 100) shrinks.
+    int scale = 100;
+    if (const char* e = std::getenv("YAP_LONG_TEST_SCALE_PERCENT"); e != nullptr) scale = std::clamp(std::atoi(e), 1, 100);
+    const std::size_t n_blocks = std::max<std::size_t>(100, 1000 * static_cast<std::size_t>(scale) / 100);
+    static const Reference ref(n_blocks, 11, 4242);
     std::size_t txs = 0;
     for (const auto& b : ref.blocks) txs += b.ctx.txs.size();
-    REQUIRE(txs >= 10'000);
+    REQUIRE(txs >= 10 * n_blocks);
 
     TempDir dir;
     std::mt19937_64 rng(7);
@@ -191,7 +199,10 @@ TEST_CASE("long run: 1000 blocks, 10000+ transactions, restarts, crashes, Memory
     int restarts = 0;
     int crashes = 0;
     while (height < ref.blocks.size()) {
-        const std::uint64_t target = std::min<std::uint64_t>(ref.blocks.size(), height + 20 + rng() % 180);
+        // Segments of 20..199 blocks at full scale, proportionally shorter when scaled (>= 2 blocks),
+        // so a scaled run still restarts and crashes several times.
+        const std::uint64_t step = std::max<std::uint64_t>(2, (20 + rng() % 180) * n_blocks / 1000);
+        const std::uint64_t target = std::min<std::uint64_t>(ref.blocks.size(), height + step);
         if (rng() % 3 == 0 && target > height + 1) {
             // Crash inside the commit of `target` at a random point, in a child process.
             const char* points[] = {"before_txn", "mid_accounts", "after_chain_state", "after_smt", "before_commit",

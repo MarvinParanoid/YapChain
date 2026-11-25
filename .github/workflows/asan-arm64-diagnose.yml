@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Manual diagnosis of the GCC ASan slowdown on aarch64 (docs/ci.md). Run 45450447412: CPU-bound
+# in-process tests were ~90x slower with GCC 14 ASan+UBSan than with Clang 18 on the same
+# ubuntu-24.04-arm runner (crash:long run > 1800 s vs 28 s); x86_64 shows no such gap. The cause is
+# NOT established. This workflow measures the same workloads under controlled variants so the cause
+# can be isolated on a real arm64 runner; it changes nothing in the regular CI.
+name: asan-arm64-diagnose
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "fuzz_smoke iterations per variant"
+        default: "20000"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: ${{ matrix.compiler }} / arm64 / ASan variants
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build make g++-14 clang-18 libcurl4-openssl-dev time
+          if [ "${{ matrix.compiler }}" = gcc ]; then
+            echo "CC=gcc-14" >> "$GITHUB_ENV"; echo "CXX=g++-14" >> "$GITHUB_ENV"
+          else
+            echo "CC=clang-18" >> "$GITHUB_ENV"; echo "CXX=clang++-18" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build ASan+UBSan (as in CI) and ASan only
+        run: |
+          cmake --preset asan -DYAP_WITH_ABCI=OFF -DYAP_WITH_NETWORK=OFF
+          cmake --build --preset asan --target yap_fuzz_smoke yap_unit_tests
+          cmake --preset asan -B build/asan-only -DYAP_SANITIZE_UBSAN=OFF -DYAP_WITH_ABCI=OFF -DYAP_WITH_NETWORK=OFF
+          cmake --build build/asan-only --target yap_fuzz_smoke yap_unit_tests
+          # The exact compile line of one translation unit, for the record.
+          grep -m1 -o '"command": "[^"]*engine.cpp[^"]*"' build/asan/compile_commands.json || true
+
+      - name: Measure variants
+        env:
+          ITER: ${{ inputs.iterations }}
+        run: |
+          mkdir -p diag
+          out="diag/${{ matrix.compiler }}.tsv"
+          printf 'build\tASAN_OPTIONS\tworkload\tseconds\tmax_rss_kb\tminor_faults\tvol_ctx\tinvol_ctx\n' > "$out"
+          preset='detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1'
+          for build in asan asan-only; do
+            for opts in "$preset" \
+                        'detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=0' \
+                        'detect_leaks=0:detect_stack_use_after_return=0:malloc_context_size=0' \
+                        'detect_leaks=0:detect_stack_use_after_return=0:fast_unwind_on_malloc=0'; do
+              for w in "fuzz_smoke $ITER" "unit_smt"; do
+                if [ "$w" = unit_smt ]; then
+                  cmd=(build/$build/tests/yap_unit_tests "persistent SMT equals the full recomputation under random updates")
+                else
+                  cmd=(build/$build/tests/yap_fuzz_smoke "$ITER")
+                fi
+                /usr/bin/time -o t.txt -f '%e\t%M\t%R\t%w\t%c' env ASAN_OPTIONS="$opts" \
+                  UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 "${cmd[@]}" > /dev/null
+                printf '%s\t%s\t%s\t%s\n' "$build" "$opts" "${w%% *}" "$(cat t.txt)" >> "$out"
+              done
+            done
+          done
+          ASAN_OPTIONS=verbosity=1 build/asan/tests/yap_fuzz_smoke 1 2> diag/${{ matrix.compiler }}-asan-runtime.txt || true
+          column -t -s $'\t' "$out" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: CPU profile of the slowest workload
+        # Diagnostic only: profiling may be unavailable on hosted runners; a failure here must not
+        # hide anything, so it is reported in the summary instead of failing the measurements.
+        run: |
+          if sudo apt-get install -y --no-install-recommends linux-tools-common "linux-tools-$(uname -r)" >/dev/null 2>&1; then
+            sudo sysctl -w kernel.perf_event_paranoid=1
+            ASAN_OPTIONS='detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1' \
+              perf record -g -o diag/perf.data build/asan/tests/yap_fuzz_smoke 5000 > /dev/null
+            perf report -i diag/perf.data --stdio --sort dso,symbol 2>/dev/null | head -60 > diag/${{ matrix.compiler }}-perf-top.txt
+            head -60 diag/${{ matrix.compiler }}-perf-top.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "perf is not available on this runner image" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: asan-arm64-${{ matrix.compiler }}
+          path: |
+            diag/*.tsv
+            diag/*.txt
+          retention-days: 30

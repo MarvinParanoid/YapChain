@@ -48,7 +48,19 @@ if(YAP_BUILD_TESTS)
   target_compile_definitions(yap_fuzz_smoke PRIVATE YAP_FUZZ_SMOKE=1)
   target_link_libraries(yap_fuzz_smoke PRIVATE yap_test_support)
   yap_target_warnings(yap_fuzz_smoke)
-  add_test(NAME fuzz_smoke COMMAND yap_fuzz_smoke 200000)
+  # Scale of the long-running tests (crash:long run, the fuzz smoke runs): 100 % everywhere except where
+  # a configuration is too slow to run them in full (docs/ci.md). The checks themselves never change.
+  set(YAP_LONG_TEST_SCALE_PERCENT 100 CACHE STRING "Scale (1..100 %) of the long-running tests")
+  if(NOT YAP_LONG_TEST_SCALE_PERCENT MATCHES "^[0-9]+$" OR YAP_LONG_TEST_SCALE_PERCENT LESS 1 OR
+     YAP_LONG_TEST_SCALE_PERCENT GREATER 100)
+    message(FATAL_ERROR "YAP_LONG_TEST_SCALE_PERCENT must be 1..100")
+  endif()
+  if(NOT YAP_LONG_TEST_SCALE_PERCENT EQUAL 100)
+    message(STATUS "long-running tests scaled to ${YAP_LONG_TEST_SCALE_PERCENT} %")
+  endif()
+  math(EXPR _yap_fuzz_iter "200000 * ${YAP_LONG_TEST_SCALE_PERCENT} / 100")
+  math(EXPR _yap_fuzz_iter_abci "100000 * ${YAP_LONG_TEST_SCALE_PERCENT} / 100")
+  add_test(NAME fuzz_smoke COMMAND yap_fuzz_smoke ${_yap_fuzz_iter})
 
   # CLI tests drive the real `yap` binary as a subprocess.
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -72,7 +84,7 @@ if(YAP_BUILD_TESTS)
     target_compile_definitions(yap_abci_fuzz_smoke PRIVATE YAP_FUZZ_SMOKE=1)
     target_link_libraries(yap_abci_fuzz_smoke PRIVATE yap::abci)
     yap_target_warnings(yap_abci_fuzz_smoke)
-    add_test(NAME fuzz_smoke_abci COMMAND yap_abci_fuzz_smoke 100000)
+    add_test(NAME fuzz_smoke_abci COMMAND yap_abci_fuzz_smoke ${_yap_fuzz_iter_abci})
     # The production yapd has no crash hooks; only yapd-test-hooks does (M2.4f).
     add_test(NAME node:no_test_hooks_in_yapd
       COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/node/test_yapd_hooks.py
@@ -132,7 +144,7 @@ if(YAP_BUILD_TESTS)
     target_compile_definitions(yap_rpc_fuzz_smoke PRIVATE YAP_FUZZ_SMOKE=1)
     target_link_libraries(yap_rpc_fuzz_smoke PRIVATE yap::rpc)
     yap_target_warnings(yap_rpc_fuzz_smoke)
-    add_test(NAME fuzz_smoke_rpc COMMAND yap_rpc_fuzz_smoke 200000)
+    add_test(NAME fuzz_smoke_rpc COMMAND yap_rpc_fuzz_smoke ${_yap_fuzz_iter})
     add_test(NAME cli:net_config COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_config.py $<TARGET_FILE:yap>)
     add_test(NAME cli:net_queries COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_queries.py $<TARGET_FILE:yap>)
     add_test(NAME cli:net_send COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_send.py $<TARGET_FILE:yap>)
@@ -143,7 +155,8 @@ if(YAP_BUILD_TESTS)
   add_executable(yap_crash_tests crash/crash_recovery_test.cpp)
   target_link_libraries(yap_crash_tests PRIVATE yap_test_support Catch2::Catch2WithMain)
   yap_target_warnings(yap_crash_tests)
-  catch_discover_tests(yap_crash_tests TEST_PREFIX "crash:" PROPERTIES TIMEOUT 1800)
+  catch_discover_tests(yap_crash_tests TEST_PREFIX "crash:" PROPERTIES TIMEOUT 1800
+    ENVIRONMENT "YAP_LONG_TEST_SCALE_PERCENT=${YAP_LONG_TEST_SCALE_PERCENT}")
 
   # Benchmark (not a test): full SMT recomputation vs incremental persistent updates.
   add_executable(yap_smt_bench bench/smt_bench.cpp)
