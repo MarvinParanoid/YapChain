@@ -37,7 +37,10 @@ YapChain — open-source блокчейн мемной экосистемы с �
 - **M2.5 Отказоустойчивость** — проверена: потеря и восстановление кворума, разделения сети 3+1 и 2+2, задержки и
   нестабильная связь, аварии нод, full node без права голоса, длительный soak с отказами
   ([docs/fault-tolerance.md](docs/fault-tolerance.md)).
-- M2.6+ — впереди, см. [docs/roadmap.md](docs/roadmap.md).
+- **M2.6 Сетевой CLI** — реализован: `yap network` — запросы состояния, блоков и транзакций, отправка транзакций,
+  подписанных локальным keystore (или офлайн), и ожидание финализации через RPC CometBFT с проверкой chain id
+  ([docs/cli-network.md](docs/cli-network.md)).
+- M2.7+ — впереди, см. [docs/roadmap.md](docs/roadmap.md).
 
 Локальная сеть из четырёх валидаторов ([scripts/localnet](scripts/localnet/README.md)) выдерживает отказ одного
 валидатора; публичного testnet нет. Dev-цепочка — локальный инструмент разработки с одним производителем блоков.
@@ -59,7 +62,22 @@ yap dev export --out journal.hex           # журнал для replay на д�
 ```
 
 Коды выхода: 0 — успех, 1 — командная строка, 2 — отклонено/невалидно, 3 — хранилище, 4 — пароль/keystore,
-5 — внутренняя ошибка. Существующие выходные файлы не перезаписываются без `--force`.
+5 — внутренняя ошибка; у сетевых команд ещё 6 — сеть/RPC, 7 — не найдено, 8 — исход неизвестен, 9 — исполнена с
+ошибкой, 10 — другая цепочка. Существующие выходные файлы не перезаписываются без `--force`.
+
+## Работа с сетью (`yap network`)
+
+```sh
+yap keys create alice
+yap network config set --rpc https://rpc.example.org:443 --chain-id yapchain-testnet-1   # доверенный RPC
+yap network status                                   # chain id проверен, высота, catching_up
+yap network query balance <tyap1...>
+yap network transfer --from alice --to <tyap1...> --amount 1.5YAP --wait               # подтвердить [y/N]
+yap network tx <HASH>                                # результат по хешу; повторной отправки нет
+```
+Подпись защищает только авторизацию: ответы RPC (балансы, высоты, «финализация») не проверяются криптографически —
+выбирайте доверенный узел. Таймаут ожидания (код 8) не означает отказ — проверьте позже по хешу. Подробно:
+[docs/cli-network.md](docs/cli-network.md).
 
 ## Сборка и тесты
 
@@ -88,6 +106,8 @@ python3 -I tools/refgen/refgen.py --out test-vectors    # перегенерир
 | [docs/economics.md](docs/economics.md) | Токеномика закрытого testnet |
 | [docs/attestations.md](docs/attestations.md) | Подписанные аттестации и начисление наград |
 | [docs/threat-model.md](docs/threat-model.md) | Модель угроз |
+| [docs/cli-network.md](docs/cli-network.md) | Сетевой режим CLI: команды, настройки, доверие к RPC, коды выхода |
+| [docs/fault-tolerance.md](docs/fault-tolerance.md) | Результаты проверок отказоустойчивости сети (M2.5) |
 | [docs/roadmap.md](docs/roadmap.md) | Этапы, scope и тест-план M1 |
 | [docs/adr/](docs/adr/) | Архитектурные решения (ADR) |
 
