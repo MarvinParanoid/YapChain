@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Finalization wait of `yap network wait` / `--wait` (M2.6e) against a mock RPC.
+"""Finalization wait of `yap network wait` / `--wait` (M2.6e, M2.6.1) against a mock RPC.
 
     test_net_wait.py <yap>
 
-Bounded timeout and polling; a timeout is reported as unknown (8), never as rejected; stalled
-consensus is noted; "expired" (2) only when the node is past expires_at_height and not catching up;
-failed execution (9); disabled indexer (6); an unreachable node during the wait ends as unknown (8);
-the result can be re-checked by hash without re-sending.
+Invariant: the CLI never claims that a transaction was not executed unless the data proves it — and
+the RPC's transaction index cannot prove absence (it is written asynchronously, can be incomplete or
+differ between nodes). Past expires_at_height the CLI reports two facts: the inclusion window is
+closed, and the execution is unknown (exit 8). Scripted index/status sequences reproduce the races.
 """
 import base64
 import hashlib
@@ -43,37 +43,48 @@ def signed(expires=500):
 
 
 def main(yap):
-    st = {"height": 100, "advance": True, "found_after": 2, "code": 0, "tx_calls": 0, "mode": "normal",
-          "catching_up": False}
     raw = signed()
     h = hashlib.sha256(raw).hexdigest().upper()
+    st = {}
+
+    def reset(tx=("missing",), heights=None, catching_up=False, code=0, identity_height=100):
+        """tx: answers of successive tx() calls ("missing" | "found" | "close" | "noindex"), the last
+        one repeats. heights: answers of successive status() calls after the identity check (None =
+        grows by one per call from 100)."""
+        st.clear()
+        st.update({"tx": list(tx), "tx_calls": 0, "heights": list(heights) if heights else None, "status_calls": 0,
+                   "height": identity_height, "catching_up": catching_up, "code": code})
+
+    def next_of(seq, i):
+        return seq[min(i, len(seq) - 1)]
 
     def handler(method, p):
-        # "down": the node becomes unreachable after the first transaction poll of the wait
-        if st["mode"] == "down" and st["tx_calls"] >= 1 and method in ("tx", "status"):
-            return ("close",)
         if method == "status":
-            if st["advance"]:
-                st["height"] += 1
+            st["status_calls"] += 1
+            if st["status_calls"] > 1:  # the first call is the identity check
+                if st["heights"]:
+                    st["height"] = next_of(st["heights"], st["status_calls"] - 2)
+                else:
+                    st["height"] += 1
+                if st["height"] == "close":
+                    return ("close",)
             return ("result", status_result(CHAIN, st["height"], st["catching_up"]))
         if method == "abci_query" and p["path"] == "/chain":
-            return ("result", query_result(chain_answer(CHAIN, st["height"]), st["height"]))
+            return ("result", query_result(chain_answer(CHAIN, 100), 100))
         if method == "broadcast_tx_sync":
             return ("result", {"code": 0, "log": "", "hash": h})
         if method == "tx":
+            a = next_of(st["tx"], st["tx_calls"])
             st["tx_calls"] += 1
-            if st["mode"] == "noindex":
+            if a == "close":
+                return ("close",)
+            if a == "noindex":
                 return ("error", -32603, "Internal error", "transaction indexing is disabled")
-            if st["found_after"] is not None and st["tx_calls"] > st["found_after"]:
-                return ("result", {"hash": h, "height": str(st["height"]), "index": 0,
+            if a == "found":
+                return ("result", {"hash": h, "height": "480", "index": 0,
                                    "tx_result": {"code": st["code"], "log": ""}, "tx": base64.b64encode(raw).decode()})
             return ("error", -32603, "Internal error", f"tx ({h}) not found")
         return ("error", -32601, "Method not found", "")
-
-    def reset(**kw):
-        st.update({"height": 100, "advance": True, "found_after": 2, "code": 0, "tx_calls": 0, "mode": "normal",
-                   "catching_up": False})
-        st.update(kw)
 
     with tempfile.TemporaryDirectory() as home, MockRpc(handler) as m:
         f = os.path.join(home, "t.hex")
@@ -83,50 +94,95 @@ def main(yap):
             t0 = time.time()
             r = subprocess.run([yap, "--home", home, "network", "--rpc", m.url, "--chain-id", CHAIN, *args],
                                capture_output=True, text=True, timeout=120)
-            return r, time.time() - t0
+            try:
+                j = json.loads(r.stdout) if r.stdout.strip() else {}
+            except ValueError:
+                j = {}
+            return r, j, time.time() - t0
 
-        reset()
-        r, _ = run("wait", h, "--poll-ms", "100", "--json")
-        j = json.loads(r.stdout)
-        check(r.returncode == 0 and j["status"] == "finalized" and j["result"] == "OK", f"finalized {r.stdout}")
-        check(st["tx_calls"] == 3, f"polled {st['tx_calls']} times")
-        reset(code=11)
-        r, _ = run("wait", h, "--poll-ms", "100", "--json")
-        check(r.returncode == 9 and json.loads(r.stdout)["status"] == "finalized_failed", f"failed -> 9 {r.stdout}")
-        # consensus stalled: height does not move; timeout -> unknown, never "rejected"
-        reset(found_after=None, advance=False)
-        r, dt = run("wait", h, "--timeout", "12", "--poll-ms", "500", "--json")
-        j = json.loads(r.stdout)
-        check(r.returncode == 8 and j["status"] == "unknown" and "NOT mean rejected" in j["note"], f"timeout {r.stdout}")
-        check("consensus may be stalled" in r.stderr, "stall note")
-        check(11 <= dt < 20, f"bounded wait {dt:.1f}s")
-        check(10 <= st["tx_calls"] <= 30, f"poll interval respected: {st['tx_calls']} polls")
-        # past the expiry height, not catching up -> expired (it can never be included)
-        reset(found_after=None, height=600)
-        r, _ = run("wait", h, "--expires", "500", "--poll-ms", "100", "--json")
-        j = json.loads(r.stdout)
-        check(r.returncode == 2 and j["status"] == "expired", f"expired {r.stdout}")
-        reset(found_after=None, height=600, catching_up=True)
-        r, _ = run("wait", h, "--expires", "500", "--timeout", "2", "--poll-ms", "200")
-        check(r.returncode == 8, f"no expiry verdict while the node catches up: {r.returncode}")
-        # indexer disabled
-        reset(mode="noindex")
-        r, _ = run("wait", h, "--poll-ms", "100")
+        def never_claims_not_executed(r, j, what):
+            text = (r.stdout + r.stderr).lower()
+            check(j.get("status") != "expired" and "not executed" not in text.replace("not proof that it was not executed", ""),
+                  f"{what}: false claim of non-execution: {r.stdout} {r.stderr}")
+
+        # 1. executed between tx() and status(): the re-check right after status() finds it
+        reset(tx=("missing", "found"), heights=[600])
+        r, j, _ = run("wait", h, "--expires", "500", "--poll-ms", "100", "--json")
+        check(r.returncode == 0 and j.get("status") == "finalized", f"1 race: {r.returncode} {r.stdout}")
+        check(st["tx_calls"] == 2, f"1 race: re-checked once, got {st['tx_calls']} tx calls")
+
+        # 2. the indexer lags the block store: found during the grace re-checks
+        reset(tx=("missing", "missing", "missing", "found"), heights=[600])
+        r, j, _ = run("wait", h, "--expires", "500", "--poll-ms", "200", "--json")
+        check(r.returncode == 0 and j.get("status") == "finalized", f"2 lagging index: {r.returncode} {r.stdout}")
+
+        # 3. executed, but absent from an incomplete index; 4. never executed at all — observably the same
+        for label in ("3 incomplete index", "4 never executed"):
+            reset(tx=("missing",), heights=[600])
+            r, j, dt = run("wait", h, "--expires", "500", "--poll-ms", "200", "--timeout", "60", "--json")
+            check(r.returncode == 8 and j.get("status") == "unknown" and j.get("execution") == "unknown"
+                  and j.get("inclusion_window") == "closed", f"{label}: {r.returncode} {r.stdout}")
+            check(j.get("node_height") == "600" and j.get("expires_at_height") == "500", f"{label}: facts {j}")
+            check("NOT proof" in j.get("note", ""), f"{label}: note {j}")
+            check(dt < 15, f"{label}: stops after the grace period, not the full timeout ({dt:.1f}s)")
+            never_claims_not_executed(r, j, label)
+
+        # 5. catching_up: heights still only grow, so a closed window is a fact; execution stays unknown
+        reset(tx=("missing",), heights=[600], catching_up=True)
+        r, j, _ = run("wait", h, "--expires", "500", "--poll-ms", "200", "--json")
+        check(r.returncode == 8 and j.get("inclusion_window") == "closed" and j.get("execution") == "unknown",
+              f"5 catching_up: {r.returncode} {r.stdout}")
+        never_claims_not_executed(r, j, "5 catching_up")
+
+        # 6. RPC unavailable during the re-check
+        reset(tx=("missing", "close"), heights=[600, "close"])
+        r, j, _ = run("wait", h, "--expires", "500", "--poll-ms", "200", "--json")
+        check(r.returncode == 8 and j.get("status") == "unknown" and "last_rpc_error" in j, f"6 rpc down: {r.stdout}")
+        never_claims_not_executed(r, j, "6 rpc down")
+
+        # 7. appears in the index after a first "not found" (before the expiry)
+        reset(tx=("missing", "missing", "found"))
+        r, j, _ = run("wait", h, "--poll-ms", "100", "--json")
+        check(r.returncode == 0 and j.get("status") == "finalized" and st["tx_calls"] == 3, f"7 late index: {r.stdout}")
+
+        # 8. timeout with stalled consensus and no expiry known: unknown, never "rejected"
+        reset(tx=("missing",), heights=[100])
+        r, j, dt = run("wait", h, "--timeout", "12", "--poll-ms", "500", "--json")
+        check(r.returncode == 8 and j.get("status") == "unknown" and "NOT mean rejected" in j.get("note", ""),
+              f"8 timeout: {r.stdout}")
+        check("consensus may be stalled" in r.stderr and 11 <= dt < 20, f"8 timeout: stall note / bounded ({dt:.1f}s)")
+        check(10 <= st["tx_calls"] <= 30, f"8 poll interval respected: {st['tx_calls']}")
+        never_claims_not_executed(r, j, "8 timeout")
+
+        # 9. finalized with an execution error is not "unknown"
+        reset(tx=("found",), code=11)
+        r, j, _ = run("wait", h, "--poll-ms", "100", "--json")
+        check(r.returncode == 9 and j.get("status") == "finalized_failed", f"9 failed: {r.stdout}")
+        reset(tx=("missing", "found"), heights=[600], code=11)
+        r, j, _ = run("wait", h, "--expires", "500", "--poll-ms", "100", "--json")
+        check(r.returncode == 9 and j.get("status") == "finalized_failed", f"9 failed after the window: {r.stdout}")
+
+        # the indexer is disabled: an error (6), not a verdict
+        reset(tx=("noindex",))
+        r, j, _ = run("wait", h, "--poll-ms", "100")
         check(r.returncode == 6 and "kv" in r.stderr, f"no indexer {r.returncode} {r.stderr}")
-        # node unreachable during the wait: keeps trying until the deadline, then unknown
-        reset(mode="down", found_after=None)
-        r, dt = run("wait", h, "--timeout", "3", "--poll-ms", "200", "--json")
-        j = json.loads(r.stdout)
-        check(r.returncode == 8 and j["status"] == "unknown" and "last_rpc_error" in j, f"down {r.stdout}")
-        # send --wait: one broadcast, then finalization; a later check by hash does not re-send
-        reset()
+
+        # send --wait: one broadcast, then the expiry from the transaction itself drives the same logic
+        reset(tx=("missing",), heights=[600])
         n = m.count("broadcast_tx_sync")
-        r, _ = run("send", f, "--wait", "--poll-ms", "100", "--json")
-        check(r.returncode == 0 and json.loads(r.stdout)["status"] == "finalized", f"send --wait {r.stdout}")
-        r, _ = run("tx", h)
-        check(r.returncode == 0 and m.count("broadcast_tx_sync") == n + 1, "re-check by hash without re-sending")
+        r, j, _ = run("send", f, "--wait", "--poll-ms", "200", "--json")
+        check(r.returncode == 8 and j.get("inclusion_window") == "closed" and m.count("broadcast_tx_sync") == n + 1,
+              f"send --wait past expiry: {r.returncode} {r.stdout}")
+        never_claims_not_executed(r, j, "send --wait")
+        reset(tx=("missing", "found"))
+        r, j, _ = run("send", f, "--wait", "--poll-ms", "100", "--json")
+        check(r.returncode == 0 and j.get("status") == "finalized", f"send --wait: {r.stdout}")
+        n = m.count("broadcast_tx_sync")
+        reset(tx=("found",))
+        r, _, _ = run("tx", h)
+        check(r.returncode == 0 and m.count("broadcast_tx_sync") == n, "re-check by hash without re-sending")
         for bad in (["--timeout", "0"], ["--timeout", "999999"], ["--poll-ms", "5"]):
-            r, _ = run("wait", h, *bad)
+            r, _, _ = run("wait", h, *bad)
             check(r.returncode == 1, f"{bad} accepted")
     if FAILS:
         print(f"{len(FAILS)} failure(s)", file=sys.stderr)

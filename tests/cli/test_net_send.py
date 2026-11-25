@@ -48,7 +48,7 @@ def signed(chain=CHAIN, nonce=0, corrupt=False):
 
 
 def main(yap):
-    mode = {"broadcast": "ok"}
+    mode = {"broadcast": "ok", "tx": "missing"}
     sent = []
 
     def handler(method, p):
@@ -79,7 +79,11 @@ def main(yap):
             if m == "close":
                 return ("close",)
         if method == "tx":
-            return ("error", -32603, "Internal error", f"tx ({base64.b64decode(p['hash']).hex().upper()}) not found")
+            hx = base64.b64decode(p["hash"]).hex().upper()
+            if mode["tx"] == "found" and sent:
+                return ("result", {"hash": hx, "height": "60", "index": 0, "tx_result": {"code": 0, "log": ""},
+                                   "tx": base64.b64encode(sent[-1]).decode()})
+            return ("error", -32603, "Internal error", f"tx ({hx}) not found")
         return ("error", -32601, "Method not found", "")
 
     with tempfile.TemporaryDirectory() as home, MockRpc(handler) as m:
@@ -131,6 +135,14 @@ def main(yap):
         r = run("send", good, "--json")
         j = json.loads(r.stdout)
         check(r.returncode == 2 and j["status"] == "rejected" and j["result"] == "ERR_NONCE", f"checktx {r.stdout}")
+        # ERR_NONCE may mean that this very transaction was already executed: never "not executed"
+        check(j.get("execution", "").startswith("unknown"), f"ERR_NONCE without index entry: {j}")
+        mode["tx"] = "found"
+        r = run("send", good, "--json")
+        j = json.loads(r.stdout)
+        check(r.returncode == 0 and j["status"] == "finalized" and "already executed" in j.get("broadcast", ""),
+              f"ERR_NONCE of an executed transaction: {r.returncode} {r.stdout}")
+        mode["tx"] = "missing"
         mode["broadcast"] = "full"
         r = run("send", good)
         check(r.returncode == 2 and "did not accept" in r.stderr, f"mempool full {r.returncode} {r.stderr}")

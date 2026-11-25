@@ -110,7 +110,7 @@ def main(yap):
         check(r.returncode == 9 and "finalized_failed" in r.stdout, f"failed execution -> 9: {r.returncode}")
         mode["tx"] = "missing"
         r = run("tx", TXH)
-        check(r.returncode == 7 and "not in the node's transaction index" in r.stderr, f"missing tx -> 7 {r.returncode}")
+        check(r.returncode == 7 and "not in this node's transaction index" in r.stderr and "not proof" in r.stderr, f"missing tx -> 7 {r.returncode}")
         mode["tx"] = "noindex"
         r = run("tx", TXH)
         check(r.returncode == 6 and "indexing is disabled" in r.stderr, f"no indexer -> 6 {r.returncode}")

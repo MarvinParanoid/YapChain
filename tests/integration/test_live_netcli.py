@@ -170,9 +170,12 @@ def main(yap, yapd, cometbft):
         done(7, f"signed offline (no network), sent and finalized at {j['height']}")
 
         step("N8", "resending an executed transaction")
+        # Whether the node answers from its cache or with CheckTx ERR_NONCE, the CLI looks the hash up and
+        # reports the earlier execution — never "rejected"/"not executed" for an executed transaction.
         r, j = u.json("send", off, rpc=rpcs[1])
-        check(r.returncode in (0, 2) and j["status"] in ("finalized", "rejected"), f"resend {r.stdout}")
+        check(r.returncode == 0 and j["status"] == "finalized", f"resend {r.stdout}")
         r2_, j2 = u.json("send", off, rpc=rpcs[2])
+        check(r2_.returncode == 0 and j2["status"] == "finalized", f"resend {r2_.stdout}")
         done(8, f"resend -> {j['status']} (exit {r.returncode}) / {j2['status']} (exit {r2_.returncode}); "
                 "executed once (model)")
 
@@ -189,9 +192,13 @@ def main(yap, yapd, cometbft):
         sends = parallel(lambda: u.json("send", files[0][0], rpc=rpcs[0]), lambda: u.json("send", files[1][0], rpc=rpcs[3]))
         waits = [u.json("wait", hx, "--expires", str(exp9), "--timeout", "90") for _, hx in files]
         outcomes = sorted(w[1]["status"] for w in waits)
-        check(outcomes == ["expired", "finalized"], f"conflict outcomes {outcomes} (sends {[s[1]['status'] for s in sends]})")
-        check(sorted(w[0].returncode for w in waits) == [0, 2], "exit codes 0 and 2")
-        done(9, f"sent {[s[1]['status'] for s in sends]}; outcomes {outcomes} (exit 0 / 2)")
+        check(outcomes == ["finalized", "unknown"], f"conflict outcomes {outcomes} (sends {[s[1]['status'] for s in sends]})")
+        check(sorted(w[0].returncode for w in waits) == [0, 8], "exit codes 0 and 8")
+        loser = next(w[1] for w in waits if w[1]["status"] == "unknown")
+        check(loser.get("inclusion_window") == "closed" and loser.get("execution") == "unknown",
+              f"loser: window closed, execution unknown (never 'not executed'): {loser}")
+        done(9, f"sent {[s[1]['status'] for s in sends]}; outcomes {outcomes} (exit 0 / 8: window closed, "
+                "execution unknown)")
 
         step("N10", "wrong chain id")
         r = u("status", chain="other-chain")
@@ -250,8 +257,10 @@ def main(yap, yapd, cometbft):
             n.start()
         r, j = u.json("wait", hq, "--timeout", "120")
         check(r.returncode == 0 and j["status"] == "finalized", f"after recovery {r.stdout}")
-        r2_, j2 = u.json("tx", hq, rpc=rpcs[3])
-        check(r2_.returncode == 0 and j2["height"] == j["height"], "same result from another node")
+        # validator-3 has just restarted and is catching up: its index can lag (the reason `tx` must never
+        # be read as "not executed"), so it is asked with `wait`, which tolerates a lagging index.
+        r2_, j2 = u.json("wait", hq, "--timeout", "60", rpc=rpcs[3])
+        check(r2_.returncode == 0 and j2["height"] == j["height"], f"same result from another node: {r2_.stdout}")
         done(16, f"finalized at {j['height']} after recovery; same answer from validator-3")
 
         step("N17", "RPC endpoint down")

@@ -399,8 +399,9 @@ void cmd_query_tx(const Context& ctx, const NetState& st, const std::string& has
     const auto hash = parse_hash(hash_text);
     const auto t = s.client->tx(hash);
     if (!t) {
-        throw CliError(kExitNotFound, "transaction " + upper_hex(hash) + " is not in the node's transaction index: "
-                                      "not executed (yet), never accepted, or the node does not index it");
+        throw CliError(kExitNotFound, "transaction " + upper_hex(hash) + " is not in this node's transaction index; "
+                                      "that is not proof either way: it may not be executed yet, never be executed, "
+                                      "or the index may lag, be incomplete or belong to another node behind this endpoint");
     }
     Report r(st.flags.json);
     report_finalized(r, s.cfg, *t);
@@ -479,6 +480,24 @@ void broadcast_and_report(Session& s, Report& r, ByteView bytes, std::optional<s
         r.str("status", "unknown");
         r.finish();
         throw ReportedError(kExitUnknown, "the node answered for another hash " + br.hash + recheck);
+    }
+    if (br.code == static_cast<std::uint32_t>(tx::TxCode::ErrNonce)) {
+        // The sender's nonce is already used — possibly by this very transaction. Never report that as
+        // "not executed": look it up, and say so when it cannot be established.
+        std::optional<rpc::TxResult> t;
+        try {
+            t = s.client->tx(hash);
+        } catch (const std::exception&) {  // the lookup is best effort; the rejection stands either way
+        }
+        if (t) {
+            r.str("broadcast", "rejected by CheckTx with ERR_NONCE: this transaction was already executed");
+            report_finalized(r, s.cfg, *t);
+            r.finish();
+            if (t->code != 0) throw ReportedError(kExitTxFailed, "finalized with execution code " + std::to_string(t->code));
+            return;
+        }
+        r.str("execution", "unknown: ERR_NONCE means the sender's nonce is already used, possibly by this very "
+                           "transaction (not in this node's index); check `yap network tx " + hx + "` before re-sending");
     }
     if (br.code != 0) {
         r.str("status", "rejected");
@@ -609,29 +628,36 @@ void cmd_send(const Context& ctx, const NetState& st, const std::string& file, c
 
 // ------------------------------------------------------------------ confirmation (M2.6e)
 
-/// Polls the node's transaction index until the transaction is final, it provably can no longer be
-/// included (the node is past its expiry height), or the timeout. A timeout is NOT a rejection.
-/// Needs the node's tx indexer ("kv", the CometBFT default); the mempool is never relied upon.
+/// Polls the node's transaction index until the transaction is found or the time is up. It never
+/// concludes that a transaction was NOT executed: a CometBFT index is written asynchronously after the
+/// block store (IndexerService), can miss heights (indexer enabled later, reset) and can differ between
+/// nodes behind one endpoint, so "not in the index" proves nothing about the chain.
+/// What the node's height does prove: once it is above expires_at_height the transaction can no longer
+/// be INCLUDED (protocol T1; heights only grow). The index is then re-checked (immediately, closing the
+/// race between tx() and status(), and for a short grace period for a lagging indexer) and the result
+/// is "unknown" with both facts. The mempool is never relied upon; nothing is ever re-sent.
 void wait_final(Session& s, Report& r, const Hash32& hash, std::optional<std::uint64_t> expires, const SendOptions& o) {
     using Clock = std::chrono::steady_clock;
     const std::string hx = upper_hex(hash);
     const auto deadline = Clock::now() + std::chrono::seconds(o.wait_timeout_s);
+    std::optional<Clock::time_point> grace_end;  // set once the inclusion window is seen closed
+    std::uint64_t closed_at = 0;                  // node height that proved the window closed
     std::uint64_t last_height = 0;
     auto last_change = Clock::now();
     bool stall_noted = false;
     std::size_t errors = 0;
     std::string last_error;
+    const auto finalized = [&](const rpc::TxResult& t) {
+        report_finalized(r, s.cfg, t);
+        r.finish();
+        if (t.code != 0) {
+            throw ReportedError(kExitTxFailed, "finalized at height " + std::to_string(t.height) +
+                                                   " with execution code " + std::to_string(t.code));
+        }
+    };
     for (;;) {
         try {
-            if (const auto t = s.client->tx(hash)) {
-                report_finalized(r, s.cfg, *t);
-                r.finish();
-                if (t->code != 0) {
-                    throw ReportedError(kExitTxFailed, "finalized at height " + std::to_string(t->height) +
-                                                           " with execution code " + std::to_string(t->code));
-                }
-                return;
-            }
+            if (const auto t = s.client->tx(hash)) return finalized(*t);
             const auto st = s.client->status();
             if (st.latest_height != last_height) {
                 last_height = st.latest_height;
@@ -640,14 +666,12 @@ void wait_final(Session& s, Report& r, const Hash32& hash, std::optional<std::ui
                 std::cerr << "note: no new block on the node for 10 s (consensus may be stalled); still waiting\n";
                 stall_noted = true;
             }
-            if (expires && st.latest_height > *expires && !st.catching_up) {
-                r.str("status", "expired");
-                r.u64("node_height", st.latest_height);
-                r.u64("expires_at_height", *expires);
-                r.finish();
-                throw ReportedError(kExitRejected, "not executed: the node is at height " + std::to_string(st.latest_height) +
-                                                       " > expires_at_height " + std::to_string(*expires) +
-                                                       ", so it can no longer be included");
+            if (expires && st.latest_height > *expires && !grace_end) {
+                closed_at = st.latest_height;
+                // Executed between the tx() and status() calls above? Ask again now.
+                if (const auto t = s.client->tx(hash)) return finalized(*t);
+                const auto grace = std::max(std::chrono::milliseconds(3 * o.poll_ms), std::chrono::milliseconds(3'000));
+                grace_end = std::min(deadline, Clock::now() + grace);
             }
         } catch (const rpc::RpcError& e) {
             if (e.data().find("transaction indexing is disabled") != std::string::npos) {
@@ -663,15 +687,31 @@ void wait_final(Session& s, Report& r, const Hash32& hash, std::optional<std::ui
             ++errors;
             last_error = e.what();
         }
-        if (Clock::now() >= deadline) {
+        const auto now = Clock::now();
+        if (now >= deadline || (grace_end && now >= *grace_end)) {
             r.str("status", "unknown");
-            r.u64("waited_s", static_cast<std::uint64_t>(o.wait_timeout_s));
-            if (last_height != 0) r.u64("node_height", last_height);
+            r.str("execution", "unknown");
+            if (grace_end) {
+                r.str("inclusion_window", "closed");
+                r.u64("node_height", closed_at);
+                r.u64("expires_at_height", *expires);
+                r.str("note", "it can no longer be included (the node is past expires_at_height), but whether it was "
+                              "executed earlier is unknown: it is not in this node's transaction index, which can lag, "
+                              "be incomplete or differ between nodes. This is NOT proof that it was not executed — check "
+                              "`yap network tx " + hx + "` later or on another node before sending anything again");
+            } else {
+                r.u64("waited_s", static_cast<std::uint64_t>(o.wait_timeout_s));
+                if (last_height != 0) r.u64("node_height", last_height);
+                r.str("note", "not final within the timeout; this does NOT mean rejected — check again with "
+                              "`yap network tx " + hx + "` or `yap network wait " + hx + "`");
+            }
             if (errors != 0) r.str("last_rpc_error", last_error);
-            r.str("note", "not final within the timeout; this does NOT mean rejected — check again with "
-                          "`yap network tx " + hx + "` or `yap network wait " + hx + "`");
             r.finish();
-            throw ReportedError(kExitUnknown, "not finalized within " + std::to_string(o.wait_timeout_s) + " s (outcome unknown)");
+            throw ReportedError(kExitUnknown, grace_end ? "outcome unknown: the inclusion window is closed (height " +
+                                                              std::to_string(closed_at) + " > expires_at_height " +
+                                                              std::to_string(*expires) + "), past execution not established"
+                                                        : "not finalized within " + std::to_string(o.wait_timeout_s) +
+                                                              " s (outcome unknown)");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(o.poll_ms));
     }
@@ -801,7 +841,8 @@ void register_network(CLI::App& app, Context& ctx) {
     auto* w = net->add_subcommand("wait", "Wait until a transaction is final (by hash; nothing is sent). A timeout "
                                           "means unknown, not rejected (exit 8)");
     w->add_option("hash", *whash, "Transaction hash")->required();
-    w->add_option("--expires", *wexp, "Its expires_at_height: lets the wait conclude 'expired' once the node is past it");
+    w->add_option("--expires", *wexp, "Its expires_at_height: once the node is past it, the wait stops early and reports "
+                                      "that it can no longer be included (execution stays unknown unless found)");
     w->add_option("--timeout", wopts->wait_timeout_s, "Seconds to wait (1..3600)")->capture_default_str();
     w->add_option("--poll-ms", wopts->poll_ms, "Polling interval (100..60000 ms)")->capture_default_str();
     w->callback([&ctx, st, whash, wexp, wopts] { guarded(*st, [&] { cmd_wait(ctx, *st, *whash, *wexp, *wopts); }); });
