@@ -21,6 +21,8 @@
 #include "yap/crypto/address.hpp"
 #include "yap/crypto/hash.hpp"
 #include "yap/rpc/comet.hpp"
+#include "yap/crypto/domains.hpp"
+#include "yap/crypto/ed25519.hpp"
 #include "yap/tx/codes.hpp"
 #include "yap/tx/transaction.hpp"
 #include "yap/wallet/amount.hpp"
@@ -67,17 +69,20 @@ struct NetState {
 
 /// Runs a network command: maps transport/RPC failures to exit codes and, with --json, also reports
 /// the error as JSON on stdout (the message always goes to stderr).
+/// `sending`: a command that broadcasts. Its broadcast step converts its own failures; any RPC
+/// failure that reaches this point happened before the broadcast, so nothing was sent.
 template <class F>
-void guarded(const NetState& st, F&& f) {
+void guarded(const NetState& st, F&& f, bool sending = false) {
+    const std::string note = sending ? " (the transaction was not sent)" : "";
     try {
         try {
             f();
         } catch (const rpc::TransportError& e) {
-            throw CliError(kExitNetwork, std::string(e.what()));
+            throw CliError(kExitNetwork, std::string(e.what()) + note);
         } catch (const rpc::MalformedResponse& e) {
-            throw CliError(kExitNetwork, std::string(e.what()));
+            throw CliError(kExitNetwork, std::string(e.what()) + note);
         } catch (const rpc::RpcError& e) {
-            throw CliError(kExitNetwork, std::string(e.what()));
+            throw CliError(kExitNetwork, std::string(e.what()) + note);
         }
     } catch (const ReportedError&) {
         throw;
@@ -403,6 +408,194 @@ void cmd_query_tx(const Context& ctx, const NetState& st, const std::string& has
     if (t->code != 0) throw CliError(kExitTxFailed, "the transaction was finalized with execution code " + std::to_string(t->code));
 }
 
+// ------------------------------------------------------------------ broadcast (M2.6d)
+
+struct SendOptions {
+    bool wait = false;
+    long wait_timeout_s = 60;
+    long poll_ms = 1'000;
+    bool skip_local_checks = false;
+};
+
+/// Checks a signed transaction before it leaves this machine: it decodes, it is for the expected
+/// chain (never skippable) and its signature is valid (skippable only for testing a node's checks).
+tx::SignedTx check_local(const NetworkConfig& cfg, ByteView bytes, bool skip_signature) {
+    auto stx = tx::decode_signed_tx(bytes);
+    if (!stx) throw CliError(kExitRejected, "not a signed transaction: " + std::string(ycs::to_string(stx.error())));
+    if (stx->body.chain_id != cfg.chain_id.value) {
+        throw CliError(kExitChainMismatch, "the transaction is signed for chain '" + stx->body.chain_id + "', expected '" +
+                                               cfg.chain_id.value + "'; not sent");
+    }
+    const bool sig_ok = crypto::verify_prefixed(stx->body.sender_pubkey, crypto::sign_prefix::kTx,
+                                                ycs::encode(stx->body), stx->signature);
+    if (!sig_ok && !skip_signature) {
+        throw CliError(kExitRejected, "the transaction signature is invalid; not sent");
+    }
+    return std::move(*stx);
+}
+
+/// Sends once with broadcast_tx_sync and reports what is known. Never re-sends.
+void broadcast_and_report(Session& s, Report& r, ByteView bytes, std::optional<std::uint64_t> expires,
+                          const SendOptions& o) {
+    const Hash32 hash = crypto::sha256(bytes);
+    const std::string hx = upper_hex(hash);
+    r.str("hash", hx);
+    r.str("tx_id", to_hex(tx::tx_id(bytes)));
+    const std::string recheck = " — not sent again; check it with `yap network tx " + hx + "`";
+    rpc::BroadcastResult br;
+    try {
+        br = s.client->broadcast_tx_sync(bytes);
+    } catch (const rpc::TransportError& e) {
+        if (!e.request_sent()) throw CliError(kExitNetwork, std::string(e.what()) + " (the transaction was not sent)");
+        r.str("status", "unknown");
+        r.finish();
+        throw ReportedError(kExitUnknown, std::string(e.what()) + ": the node may or may not have accepted it" + recheck);
+    } catch (const rpc::MalformedResponse& e) {
+        r.str("status", "unknown");
+        r.finish();
+        throw ReportedError(kExitUnknown, std::string(e.what()) + recheck);
+    } catch (const rpc::RpcError& e) {
+        if (e.data().find("tx already exists in cache") == std::string::npos) {
+            r.str("status", "not_accepted");
+            r.str("node_error", e.data().empty() ? e.message() : e.data());
+            r.finish();
+            throw ReportedError(kExitRejected, "the node did not accept the transaction: " + std::string(e.what()));
+        }
+        // The node has seen these exact bytes before (executed, or still in a mempool somewhere).
+        r.str("status", "already_known");
+        if (const auto t = s.client->tx(hash)) {
+            report_finalized(r, s.cfg, *t);
+            r.finish();
+            if (t->code != 0) throw ReportedError(kExitTxFailed, "finalized with execution code " + std::to_string(t->code));
+            return;
+        }
+        r.finish();
+        throw ReportedError(kExitUnknown, "the node already received this transaction earlier and it is not final yet" + recheck);
+    }
+    if (br.hash != hx) {
+        r.str("status", "unknown");
+        r.finish();
+        throw ReportedError(kExitUnknown, "the node answered for another hash " + br.hash + recheck);
+    }
+    if (br.code != 0) {
+        r.str("status", "rejected");
+        r.u64("check_tx_code", br.code);
+        r.str("result", std::string(tx::to_string(static_cast<tx::TxCode>(br.code))));
+        if (!br.log.empty()) r.str("log", br.log);
+        r.finish();
+        throw ReportedError(kExitRejected, "rejected by CheckTx: " + std::string(tx::to_string(static_cast<tx::TxCode>(br.code))));
+    }
+    r.str("status", "accepted_mempool");
+    r.str("note", "accepted into the mempool of " + s.cfg.rpc.value + "; NOT final — confirm with `yap network tx " + hx + "`");
+    r.finish();
+    (void)expires;
+    (void)o;
+}
+
+struct NewTxArgs {
+    std::string from;
+    std::string to;
+    std::string amount;
+    std::string fee;
+    std::string nonce;
+    std::string expires;
+    std::uint64_t ttl = 100;
+    std::string memo;
+    std::string out;
+    bool yes = false;
+};
+
+std::optional<std::uint64_t> opt_decimal(const std::string& text, const char* what) {
+    if (text.empty()) return std::nullopt;
+    const auto v = wallet::parse_decimal_u64(text);
+    if (!v) throw CliError(kExitUsage, std::string("invalid ") + what + " '" + text + "' (decimal digits only)");
+    return v;
+}
+
+std::uint64_t parse_yip(const std::string& text, const char* what) {
+    const auto v = wallet::parse_amount(text);
+    if (!v) throw CliError(kExitUsage, std::string("invalid ") + what + " '" + text + "' (integer yip, or e.g. 1.5YAP)");
+    return *v;
+}
+
+/// Asks before signing on a terminal; elsewhere --yes is required (documented automation mode).
+void confirm(const NewTxArgs& a, const std::string& summary) {
+    std::cerr << summary;
+    if (a.yes) return;
+    if (::isatty(STDIN_FILENO) == 0) {
+        throw CliError(kExitUsage, "confirmation needed: run on a terminal, or pass --yes for non-interactive use");
+    }
+    std::cerr << "Sign and send this transaction? [y/N] " << std::flush;
+    std::string answer;
+    std::getline(std::cin, answer);
+    if (answer != "y" && answer != "Y" && answer != "yes") throw CliError(kExitRejected, "not signed");
+}
+
+void cmd_new_tx(const Context& ctx, const NetState& st, const std::string& kind, const NewTxArgs& a, const SendOptions& o) {
+    auto s = open_session(ctx, st);
+    const auto status = check_identity(s, /*require=*/true);
+    const auto [ph, params] = app_query(*s.client, "/params");
+    const std::uint64_t min_fee = ju64(params, "min_fee");
+    const std::uint64_t max_ttl = ju64(params, "max_tx_ttl_blocks");
+
+    tx::TxBody b;
+    b.chain_id = s.cfg.chain_id.value;  // the expected chain id, never the node's answer
+    b.sender_pubkey = load_key_info(ctx.key_path(a.from), wallet::KeyPurpose::Account).public_key;
+    const std::string sender = crypto::encode_address(s.cfg.hrp(), b.sender());
+    const auto acc = remote_account(s, sender);
+    const auto nonce = opt_decimal(a.nonce, "--nonce");
+    b.nonce = nonce.value_or(acc.nonce);
+    const auto expires = opt_decimal(a.expires, "--expires");
+    if (a.ttl == 0) throw CliError(kExitUsage, "--ttl must be >= 1");
+    b.expires_at_height = expires.value_or(std::max(acc.height, status.latest_height) + std::min(a.ttl, max_ttl));
+    b.fee = a.fee.empty() ? min_fee : parse_yip(a.fee, "--fee");
+    if (a.memo.size() > tx::kMemoCeiling) throw CliError(kExitUsage, "memo longer than 1024 bytes");
+    b.memo.assign(a.memo.begin(), a.memo.end());
+    const std::uint64_t amt = parse_yip(a.amount, "--amount");
+    if (amt == 0) throw CliError(kExitRejected, "amount must be >= 1 yip");
+    std::string summary = "chain_id: " + b.chain_id + "\nfrom: " + sender + "\n";
+    if (kind == "transfer") {
+        const auto to = parse_address(s.cfg, a.to);
+        if (to == b.sender()) throw CliError(kExitRejected, "the recipient must differ from the sender");
+        b.payload = tx::Transfer{to, amt};
+        summary += "to: " + a.to + "\n";
+    } else {
+        b.payload = tx::Burn{amt};
+    }
+    summary += kind + " amount: " + wallet::format_amount(amt) + "\nfee: " + wallet::format_amount(b.fee) +
+               "\nnonce: " + std::to_string(b.nonce) + (nonce ? " (given)" : " (from the node)") +
+               "\nexpires_at_height: " + std::to_string(b.expires_at_height) + "\nrpc: " + s.cfg.rpc.value + "\n";
+    confirm(a, summary);
+
+    const auto key = unlock_key(ctx, ctx.key_path(a.from), wallet::KeyPurpose::Account);  // stays local
+    if (key.public_key() != b.sender_pubkey) throw CliError(kExitRejected, "key '" + a.from + "' is not the sender");
+    const Bytes bytes = ycs::encode(tx::sign_tx(b, key));
+    (void)check_local(s.cfg, bytes, false);
+    if (!a.out.empty()) write_file_bytes(a.out, as_bytes(to_hex(bytes) + "\n"), ctx.force);
+
+    Report r(st.flags.json);
+    r.str("type", kind);
+    r.str("from", sender);
+    if (kind == "transfer") r.str("to", a.to);
+    amount(r, "amount", amt);
+    amount(r, "fee", b.fee);
+    r.u64("nonce", b.nonce);
+    r.u64("expires_at_height", b.expires_at_height);
+    if (!a.out.empty()) r.str("tx_file", a.out);
+    broadcast_and_report(s, r, bytes, b.expires_at_height, o);
+}
+
+void cmd_send(const Context& ctx, const NetState& st, const std::string& file, const SendOptions& o) {
+    auto s = open_session(ctx, st);
+    if (!s.cfg.has_chain_id()) (void)check_identity(s, true);  // explains how to set it
+    const Bytes bytes = read_hex_file(file);
+    const auto stx = check_local(s.cfg, bytes, o.skip_local_checks);
+    (void)check_identity(s, true);
+    Report r(st.flags.json);
+    describe_tx(r, s.cfg, bytes);
+    broadcast_and_report(s, r, bytes, stx.body.expires_at_height, o);
+}
+
 void fallthrough_all(CLI::App* app) {
     for (auto* sub : app->get_subcommands({})) {
         sub->fallthrough();
@@ -470,6 +663,33 @@ void register_network(CLI::App& app, Context& ctx) {
     auto* tq = net->add_subcommand("tx", "Same as `query tx`: result of a transaction by hash");
     tq->add_option("hash", *thash, "Transaction hash")->required();
     tq->callback([&ctx, st, thash] { guarded(*st, [&] { cmd_query_tx(ctx, *st, *thash); }); });
+
+    auto sfile = std::make_shared<std::string>();
+    auto sopts = std::make_shared<SendOptions>();
+    auto* snd = net->add_subcommand("send", "Broadcast a signed transaction file (hex) once; never re-sent automatically");
+    snd->add_option("file", *sfile, "Signed transaction (hex), e.g. from `yap tx transfer --out`")->required();
+    snd->add_flag("--skip-local-checks", sopts->skip_local_checks,
+                  "Send even if the signature does not verify locally (to test a node; the chain id check stays)");
+    snd->callback([&ctx, st, sfile, sopts] { guarded(*st, [&] { cmd_send(ctx, *st, *sfile, *sopts); }, true); });
+    for (const char* kind : {"transfer", "burn"}) {
+        auto a = std::make_shared<NewTxArgs>();
+        auto o = std::make_shared<SendOptions>();
+        auto* c = net->add_subcommand(kind, std::string("Build a ") + kind +
+                                                " (nonce, fee, expiry from the node), sign it with a local key, send it");
+        c->add_option("--from", a->from, "Sender key name (local keystore; the key never leaves this machine)")->required();
+        if (std::string(kind) == "transfer") c->add_option("--to", a->to, "Recipient address")->required();
+        c->add_option("--amount", a->amount, "Amount: integer yip, or decimal YAP like 1.5YAP")->required();
+        c->add_option("--fee", a->fee, "Fee (default: min_fee from the node)");
+        c->add_option("--nonce", a->nonce, "Nonce (default: the sender's committed nonce from the node)");
+        c->add_option("--expires", a->expires, "Last valid height (default: node height + --ttl)");
+        c->add_option("--ttl", a->ttl, "Blocks of validity when --expires is not given (capped by max_tx_ttl_blocks)")
+            ->capture_default_str();
+        c->add_option("--memo", a->memo, "Memo text");
+        c->add_option("--out", a->out, "Also write the signed transaction (hex) to this file");
+        c->add_flag("--yes", a->yes, "Do not ask for confirmation (required when not on a terminal)");
+        const std::string k = kind;
+        c->callback([&ctx, st, a, o, k] { guarded(*st, [&] { cmd_new_tx(ctx, *st, k, *a, *o); }, true); });
+    }
 
     fallthrough_all(net);  // network options may also follow the subcommand
 }
