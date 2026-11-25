@@ -415,7 +415,7 @@ struct SendOptions {
     bool wait = false;
     long wait_timeout_s = 60;
     long poll_ms = 1'000;
-    bool skip_local_checks = false;
+    bool skip_signature_check = false;  ///< diagnostics only: see --skip-signature-check
 };
 
 /// Checks a signed transaction before it leaves this machine: it decodes, it is for the expected
@@ -430,7 +430,8 @@ tx::SignedTx check_local(const NetworkConfig& cfg, ByteView bytes, bool skip_sig
     const bool sig_ok = crypto::verify_prefixed(stx->body.sender_pubkey, crypto::sign_prefix::kTx,
                                                 ycs::encode(stx->body), stx->signature);
     if (!sig_ok && !skip_signature) {
-        throw CliError(kExitRejected, "the transaction signature is invalid; not sent");
+        throw CliError(kExitRejected, "the transaction signature is invalid; not sent "
+                                      "(diagnostics: --skip-signature-check lets the node judge it)");
     }
     return std::move(*stx);
 }
@@ -619,7 +620,7 @@ void cmd_send(const Context& ctx, const NetState& st, const std::string& file, c
     auto s = open_session(ctx, st);
     if (!s.cfg.has_chain_id()) (void)check_identity(s, true);  // explains how to set it
     const Bytes bytes = read_hex_file(file);
-    const auto stx = check_local(s.cfg, bytes, o.skip_local_checks);
+    const auto stx = check_local(s.cfg, bytes, o.skip_signature_check);
     (void)check_identity(s, true);
     Report r(st.flags.json);
     describe_tx(r, s.cfg, bytes);
@@ -805,8 +806,12 @@ void register_network(CLI::App& app, Context& ctx) {
     auto sopts = std::make_shared<SendOptions>();
     auto* snd = net->add_subcommand("send", "Broadcast a signed transaction file (hex) once; never re-sent automatically");
     snd->add_option("file", *sfile, "Signed transaction (hex), e.g. from `yap tx transfer --out`")->required();
-    snd->add_flag("--skip-local-checks", sopts->skip_local_checks,
-                  "Send even if the signature does not verify locally (to test a node; the chain id check stays)");
+    // Diagnostics only: lets a node's own CheckTx judge a transaction whose signature does not verify
+    // here. Only the local signature check is skipped; decoding and the chain id check always apply.
+    // A node accepts nothing through it that a raw RPC request could not send. Old name kept as alias.
+    snd->add_flag("--skip-signature-check,--skip-local-checks", sopts->skip_signature_check,
+                  "Diagnostics: send even if the signature does not verify locally (only that check is skipped; "
+                  "the chain id is always checked). Alias: --skip-local-checks");
     const auto add_wait = [](CLI::App* c, SendOptions& o) {
         c->add_flag("--wait", o.wait, "Wait until the transaction is final (bounded by --wait-timeout)");
         c->add_option("--wait-timeout", o.wait_timeout_s, "Seconds to wait for finalization (1..3600)")->capture_default_str();

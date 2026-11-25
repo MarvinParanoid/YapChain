@@ -215,9 +215,9 @@ def main(yap, yapd, cometbft):
         raw[-1] ^= 1
         open(badf, "w").write(raw.hex())
         r = u("send", badf)
-        r2_, j2 = u.json("send", badf, "--skip-local-checks")
+        r2_, j2 = u.json("send", badf, "--skip-signature-check")
         check(r.returncode == 2 and r2_.returncode == 2 and j2["result"] == "ERR_SIGNATURE", f"bad sig {r2_.stdout}")
-        done(11, "refused locally (exit 2); with --skip-local-checks the node's CheckTx says ERR_SIGNATURE (exit 2)")
+        done(11, "refused locally (exit 2); with --skip-signature-check the node's CheckTx says ERR_SIGNATURE (exit 2)")
 
         step("N12", "insufficient balance")
         r, j = u.json("transfer", "--from", "w2", "--to", w1, "--amount", "1000000YAP", "--yes")

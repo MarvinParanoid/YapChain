@@ -43,6 +43,12 @@ node_key.json
 /.yapchain/
 /.cometbft/
 
+# yap CLI data created inside the repository by mistake (`--home .`): keystores, password files and the
+# network configuration. Anchored at the root so that src/wallet/ and other sources stay visible.
+/keys/
+/network.json
+*.password
+
 # Secrets and local configuration
 .env
 .env.*

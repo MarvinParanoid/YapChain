@@ -170,10 +170,18 @@ def main(yap):
         r = run("send", bad)
         check(r.returncode == 2 and "signature is invalid" in r.stderr, f"bad signature {r.stderr}")
         check(m.count("broadcast_tx_sync") == n, "a locally refused transaction was sent")
+        r = run("send", bad, "--skip-signature-check")
+        check(r.returncode == 0 and m.count("broadcast_tx_sync") == n + 1, "--skip-signature-check sends")
         r = run("send", bad, "--skip-local-checks")
-        check(r.returncode == 0 and m.count("broadcast_tx_sync") == n + 1, "--skip-local-checks sends")
-        r = run("send", other, "--skip-local-checks")
-        check(r.returncode == 10, "the chain id check is never skipped")
+        check(r.returncode == 0 and m.count("broadcast_tx_sync") == n + 2, "--skip-local-checks stays an alias")
+        for flag in ("--skip-signature-check", "--skip-local-checks"):
+            r = run("send", other, flag)
+            check(r.returncode == 10, f"the chain id check is never skipped ({flag})")
+        garbage = os.path.join(home, "garbage.hex")
+        open(garbage, "w").write("00ff00ff")
+        r = run("send", garbage, "--skip-signature-check")
+        check(r.returncode == 2 and "not a signed transaction" in r.stderr, "decoding is never skipped")
+        check(m.count("broadcast_tx_sync") == n + 2, "nothing sent for other-chain or undecodable files")
 
         # nothing secret ever left: requests carry public data only
         password = "correct horse battery staple"
