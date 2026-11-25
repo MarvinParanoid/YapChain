@@ -21,6 +21,8 @@
 #include "yap/crypto/address.hpp"
 #include "yap/crypto/hash.hpp"
 #include "yap/rpc/comet.hpp"
+#include "yap/tx/codes.hpp"
+#include "yap/tx/transaction.hpp"
 #include "yap/wallet/amount.hpp"
 
 namespace yap::cli {
@@ -119,7 +121,7 @@ std::string jstr(const Json& j, const char* k) {
     return j[k].get<std::string>();
 }
 
-[[maybe_unused]] std::uint64_t ju64(const Json& j, const char* k) {
+std::uint64_t ju64(const Json& j, const char* k) {
     const auto v = wallet::parse_decimal_u64(jstr(j, k));
     if (!v) throw CliError(kExitNetwork, std::string("query answer: '") + k + "' is not a decimal");
     return *v;
@@ -218,6 +220,196 @@ void cmd_info(const Context& ctx, const NetState& st) {
     r.finish();
 }
 
+
+// ------------------------------------------------------------------ remote queries (M2.6c)
+
+crypto::AccountId parse_address(const NetworkConfig& cfg, const std::string& text) {
+    auto id = crypto::decode_address(text, cfg.hrp());
+    if (!id) throw CliError(kExitRejected, "invalid address '" + text + "': " + std::string(crypto::to_string(id.error())));
+    return *id;
+}
+
+Hash32 parse_hash(const std::string& text) {
+    std::string lower = text;
+    if (lower.rfind("0x", 0) == 0 || lower.rfind("0X", 0) == 0) lower = lower.substr(2);
+    for (auto& c : lower) {
+        if (c >= 'A' && c <= 'F') c = static_cast<char>(c - 'A' + 'a');
+    }
+    auto h = from_hex_fixed<32>(lower);
+    if (!h) throw CliError(kExitRejected, "invalid transaction hash '" + text + "' (64 hex characters)");
+    return *h;
+}
+
+std::string upper_hex(ByteView b) {
+    std::string s = to_hex(b);
+    for (auto& c : s) {
+        if (c >= 'a' && c <= 'f') c = static_cast<char>(c - 'a' + 'A');
+    }
+    return s;
+}
+
+void amount(Report& r, const std::string& k, std::uint64_t yip) {
+    r.u64(k + "_yip", yip);
+    r.str(k, wallet::format_amount(yip));
+}
+
+void latest_only(Report& r, std::uint64_t h) {
+    r.u64("height", h);
+    r.str("state", "latest committed state at this height (no historical queries; unverified RPC answer)");
+}
+
+void cmd_query_chain(const Context& ctx, const NetState& st) {
+    auto s = open_session(ctx, st);
+    (void)check_identity(s, false);
+    const auto [h, j] = app_query(*s.client, "/chain");
+    Report r(st.flags.json);
+    r.str("chain_id", jstr(j, "chain_id"));
+    latest_only(r, h);
+    r.str("state_root", jstr(j, "state_root"));
+    r.str("genesis_hash", jstr(j, "genesis_hash"));
+    r.u64("last_time_ms", ju64(j, "last_time_ms"));
+    amount(r, "total_supply", ju64(j, "total_supply"));
+    amount(r, "total_minted", ju64(j, "total_minted"));
+    amount(r, "total_burned", ju64(j, "total_burned"));
+    r.finish();
+}
+
+void cmd_query_params(const Context& ctx, const NetState& st) {
+    auto s = open_session(ctx, st);
+    (void)check_identity(s, false);
+    const auto [h, j] = app_query(*s.client, "/params");
+    Report r(st.flags.json);
+    latest_only(r, h);
+    amount(r, "min_fee", ju64(j, "min_fee"));
+    amount(r, "block_reward", ju64(j, "block_reward"));
+    amount(r, "max_issuance", ju64(j, "max_issuance"));
+    r.u64("max_tx_ttl_blocks", ju64(j, "max_tx_ttl_blocks"));
+    r.u64("epoch_length_blocks", ju64(j, "epoch_length_blocks"));
+    for (const char* k : {"fee_burn_bps", "reward_validators_bps", "reward_pool_bps", "reward_treasury_bps",
+                          "max_tx_bytes", "max_memo_bytes"}) {
+        if (!j.contains(k) || !j[k].is_number_unsigned()) throw CliError(kExitNetwork, std::string("query answer lacks '") + k + "'");
+        r.u64(k, j[k].get<std::uint64_t>());
+    }
+    r.finish();
+}
+
+struct RemoteAccount {
+    std::uint64_t height = 0;
+    bool exists = false;
+    std::uint64_t balance = 0;
+    std::uint64_t nonce = 0;
+    std::string account_id;
+};
+
+RemoteAccount remote_account(Session& s, const std::string& address) {
+    (void)parse_address(s.cfg, address);
+    const auto [h, j] = app_query(*s.client, "/account/" + address);
+    if (jstr(j, "address") != address) throw CliError(kExitNetwork, "the node answered for another address");
+    if (!j.contains("exists") || !j["exists"].is_boolean()) throw CliError(kExitNetwork, "query answer lacks 'exists'");
+    return {h, j["exists"].get<bool>(), ju64(j, "balance"), ju64(j, "nonce"), jstr(j, "account_id")};
+}
+
+void cmd_query_account(const Context& ctx, const NetState& st, const std::string& address, bool full) {
+    auto s = open_session(ctx, st);
+    (void)check_identity(s, false);
+    const auto a = remote_account(s, address);
+    Report r(st.flags.json);
+    r.str("address", address);
+    if (full) r.str("account_id", a.account_id);
+    r.flag("exists", a.exists);  // an absent account is a valid answer: balance 0, nonce 0
+    amount(r, "balance", a.balance);
+    if (full) r.u64("nonce", a.nonce);
+    latest_only(r, a.height);
+    r.finish();
+}
+
+void cmd_query_block(const Context& ctx, const NetState& st, std::optional<std::uint64_t> height) {
+    auto s = open_session(ctx, st);
+    (void)check_identity(s, false);
+    const auto b = s.client->block(height);
+    if (!b) throw CliError(kExitNotFound, "the node has no block at height " + std::to_string(height.value_or(0)));
+    if (s.cfg.has_chain_id() && b->chain_id != s.cfg.chain_id.value) {
+        throw CliError(kExitChainMismatch, "block of chain '" + b->chain_id + "', expected '" + s.cfg.chain_id.value + "'");
+    }
+    Report r(st.flags.json);
+    r.u64("height", b->height);
+    r.str("block_hash", b->block_hash);
+    r.str("chain_id", b->chain_id);
+    r.str("time", b->time);
+    r.str("app_hash", b->app_hash);
+    r.str("app_hash_meaning", "state root after height " + std::to_string(b->height - 1));
+    r.str("proposer_address", b->proposer_address);
+    r.u64("last_commit_signatures", b->last_commit_signatures);
+    r.u64("txs", b->txs.size());
+    Json hashes = Json::array();
+    for (const auto& t : b->txs) {
+        const auto h = upper_hex(crypto::sha256(t));
+        hashes.push_back(h);
+        if (!r.json()) out("tx_hash", h);
+    }
+    if (r.json()) r.raw("tx_hashes", hashes, "");
+    r.finish();
+}
+
+/// The transaction fields worth showing, if the bytes decode as a YapChain transaction.
+void describe_tx(Report& r, const NetworkConfig& cfg, ByteView bytes) {
+    const auto stx = tx::decode_signed_tx(bytes);
+    if (!stx) {
+        r.str("decoded", "no");
+        return;
+    }
+    const auto& b = stx->body;
+    const auto tag = tx::payload_tag(b.payload);
+    r.str("type", tag == tx::PayloadTag::Transfer ? "transfer" : tag == tx::PayloadTag::Burn ? "burn" : "claim_achievement");
+    r.str("tx_chain_id", b.chain_id);
+    r.str("sender", crypto::encode_address(cfg.hrp(), b.sender()));
+    r.u64("nonce", b.nonce);
+    amount(r, "fee", b.fee);
+    r.u64("expires_at_height", b.expires_at_height);
+    if (const auto* t = std::get_if<tx::Transfer>(&b.payload)) {
+        r.str("to", crypto::encode_address(cfg.hrp(), t->to));
+        amount(r, "amount", t->amount);
+    } else if (const auto* bn = std::get_if<tx::Burn>(&b.payload)) {
+        amount(r, "amount", bn->amount);
+    }
+    r.str("tx_id", to_hex(tx::tx_id(bytes)));
+}
+
+/// Finalized result of a transaction (exit 0 when executed OK, 9 when executed with an error code).
+void report_finalized(Report& r, const NetworkConfig& cfg, const rpc::TxResult& t) {
+    r.str("status", t.code == 0 ? "finalized" : "finalized_failed");
+    r.str("hash", t.hash);
+    r.u64("height", t.height);
+    r.u64("index", t.index);
+    r.u64("code", t.code);
+    r.str("result", t.code == 0 ? "OK" : std::string(tx::to_string(static_cast<tx::TxCode>(t.code))));
+    if (!t.log.empty()) r.str("log", t.log);
+    describe_tx(r, cfg, t.tx);
+    r.str("trust", "unverified RPC answer (no light client)");
+}
+
+void cmd_query_tx(const Context& ctx, const NetState& st, const std::string& hash_text) {
+    auto s = open_session(ctx, st);
+    (void)check_identity(s, false);
+    const auto hash = parse_hash(hash_text);
+    const auto t = s.client->tx(hash);
+    if (!t) {
+        throw CliError(kExitNotFound, "transaction " + upper_hex(hash) + " is not in the node's transaction index: "
+                                      "not executed (yet), never accepted, or the node does not index it");
+    }
+    Report r(st.flags.json);
+    report_finalized(r, s.cfg, *t);
+    r.finish();
+    if (t->code != 0) throw CliError(kExitTxFailed, "the transaction was finalized with execution code " + std::to_string(t->code));
+}
+
+void fallthrough_all(CLI::App* app) {
+    for (auto* sub : app->get_subcommands({})) {
+        sub->fallthrough();
+        fallthrough_all(sub);
+    }
+}
+
 }  // namespace
 
 void register_network(CLI::App& app, Context& ctx) {
@@ -250,9 +442,36 @@ void register_network(CLI::App& app, Context& ctx) {
         guarded(*st, [&] { cmd_info(ctx, *st); });
     });
 
-    for (auto* sub : net->get_subcommands({})) sub->fallthrough();
-    cfg->fallthrough();
-    for (auto* sub : cfg->get_subcommands({})) sub->fallthrough();
+    auto* q = net->add_subcommand("query", "Query the latest committed state through the node (unverified)");
+    q->require_subcommand(1);
+    q->add_subcommand("chain", "Chain summary: height, state root, supply")->callback([&ctx, st] {
+        guarded(*st, [&] { cmd_query_chain(ctx, *st); });
+    });
+    q->add_subcommand("params", "Chain parameters: fees, emission, limits")->callback([&ctx, st] {
+        guarded(*st, [&] { cmd_query_params(ctx, *st); });
+    });
+    auto qaddr = std::make_shared<std::string>();
+    auto* qb = q->add_subcommand("balance", "Balance of an address");
+    qb->add_option("address", *qaddr, "Address")->required();
+    qb->callback([&ctx, st, qaddr] { guarded(*st, [&] { cmd_query_account(ctx, *st, *qaddr, false); }); });
+    auto qaddr2 = std::make_shared<std::string>();
+    auto* qa = q->add_subcommand("account", "Account: balance and nonce");
+    qa->add_option("address", *qaddr2, "Address")->required();
+    qa->callback([&ctx, st, qaddr2] { guarded(*st, [&] { cmd_query_account(ctx, *st, *qaddr2, true); }); });
+    auto qheight = std::make_shared<std::optional<std::uint64_t>>();
+    auto* qbl = q->add_subcommand("block", "A block by height (default: the latest)");
+    qbl->add_option("height", *qheight, "Height");
+    qbl->callback([&ctx, st, qheight] { guarded(*st, [&] { cmd_query_block(ctx, *st, *qheight); }); });
+    auto qhash = std::make_shared<std::string>();
+    auto* qt = q->add_subcommand("tx", "A finalized transaction by hash (needs the node's tx index)");
+    qt->add_option("hash", *qhash, "Transaction hash (CometBFT: SHA-256 of the bytes, hex)")->required();
+    qt->callback([&ctx, st, qhash] { guarded(*st, [&] { cmd_query_tx(ctx, *st, *qhash); }); });
+    auto thash = std::make_shared<std::string>();
+    auto* tq = net->add_subcommand("tx", "Same as `query tx`: result of a transaction by hash");
+    tq->add_option("hash", *thash, "Transaction hash")->required();
+    tq->callback([&ctx, st, thash] { guarded(*st, [&] { cmd_query_tx(ctx, *st, *thash); }); });
+
+    fallthrough_all(net);  // network options may also follow the subcommand
 }
 
 }  // namespace yap::cli
