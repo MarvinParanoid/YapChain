@@ -8,10 +8,17 @@ on:
 permissions:
   contents: read
 
+# One run per branch/PR at a time; a newer push cancels the older run, except on main, where every
+# commit keeps its own complete result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build-test:
     name: ${{ matrix.arch }} / ${{ matrix.compiler }} / ${{ matrix.preset }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout || 75 }}
     strategy:
       fail-fast: false
       matrix:
@@ -26,9 +33,9 @@ jobs:
           # GCC ASan on arm64 runs in-process tests ~90x slower than Clang ASan on the same runner
           # (run 45450447412; cause under diagnosis: asan-arm64-diagnose.yml, docs/ci.md). Only here the
           # long-running tests run at 25 % scale with the same checks; every other job runs them in full.
-          - { arch: aarch64, compiler: gcc, preset: asan, long_test_scale: 25 }
+          - { arch: aarch64, compiler: gcc, preset: asan, long_test_scale: 25, timeout: 120 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install toolchain
         run: |
@@ -40,6 +47,11 @@ jobs:
             echo "CC=clang-18" >> "$GITHUB_ENV"; echo "CXX=clang++-18" >> "$GITHUB_ENV"
           fi
 
+      - name: Versions
+        run: |
+          "$CXX" --version | head -1; cmake --version | head -1; ninja --version
+          curl-config --version; python3 --version; uname -m
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DYAP_LONG_TEST_SCALE_PERCENT=${{ matrix.long_test_scale || 100 }}
 
@@ -49,11 +61,20 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+      - name: Keep test logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: test-logs-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.preset }}
+          path: build/${{ matrix.preset }}/Testing/Temporary/
+          retention-days: 14
+
   vectors-reproducible:
     name: test vectors are reproducible
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Regenerate with the independent reference implementation
         run: |
           python3 -I tools/refgen/refgen.py --out "$RUNNER_TEMP/vectors"
@@ -62,8 +83,9 @@ jobs:
   fuzz:
     name: libFuzzer (clang, x86_64)
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -74,7 +96,19 @@ jobs:
           cmake --build --preset fuzz
       - name: Run each target for 120 s
         run: |
-          for t in ycs bech32m tx devblock; do
+          for t in ycs bech32m tx devblock abci rpc; do
+            test -x "./build/fuzz/tests/fuzz_$t" || { echo "missing fuzz target $t"; exit 1; }
             mkdir -p "corpus/$t"
             ./build/fuzz/tests/fuzz_$t "corpus/$t" -max_total_time=120 -print_final_stats=1
           done
+      - name: Keep crash inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: fuzz-crashes
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+            oom-*
+          retention-days: 14
