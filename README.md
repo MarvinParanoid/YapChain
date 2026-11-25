@@ -67,7 +67,8 @@ yap dev export --out journal.hex           # журнал для replay на д�
 Зависимости (libsodium 1.0.22, Catch2 3.16.1, nlohmann/json 3.12.0, LMDB 0.9.36, CLI11 2.7.2, а для ABCI —
 abseil 20260817.0 и protobuf v36.2) скачиваются CMake и проверяются по SHA-256 (офлайн: `-DYAP_DEPS_DIR=<каталог>`).
 protobuf и abseil собираются при первой конфигурации каждого каталога сборки (около 1,5 мин); без ABCI —
-`-DYAP_WITH_ABCI=OFF`. Для `yapd` с CometBFT нужен Go ≥ 1.25 (см. [scripts/localnet](scripts/localnet/README.md)).
+`-DYAP_WITH_ABCI=OFF`. Сетевым командам CLI нужен системный libcurl ≥ 7.85 с заголовками (`libcurl4-openssl-dev`,
+[ADR-0029](docs/adr/0029-rpc-client.md)); без них — `-DYAP_WITH_NETWORK=OFF`. Для `yapd` с CometBFT нужен Go ≥ 1.25 (см. [scripts/localnet](scripts/localnet/README.md)).
 
 ```sh
 cmake --preset debug   && cmake --build --preset debug   && ctest --preset debug

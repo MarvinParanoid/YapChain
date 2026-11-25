@@ -33,3 +33,4 @@
 | [0026](0026-cometbft-version.md) | Версия CometBFT для M2: v0.40.0 | DECIDED |
 | [0027](0027-cometbft-acquisition.md) | Получение CometBFT и protobuf: сборка из проверенных исходников | DECIDED |
 | [0028](0028-abci-adapter.md) | ABCI++ адаптер: синхронизация, fail-stop, InitChain, Query | DECIDED |
+| [0029](0029-rpc-client.md) | Клиент CometBFT RPC: libcurl, ограничения, строгий JSON-RPC, доверие | DECIDED |

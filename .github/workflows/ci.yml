@@ -29,7 +29,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build make g++-14 clang-18
+          sudo apt-get install -y --no-install-recommends ninja-build make g++-14 clang-18 libcurl4-openssl-dev
           if [ "${{ matrix.compiler }}" = gcc ]; then
             echo "CC=gcc-14" >> "$GITHUB_ENV"; echo "CXX=g++-14" >> "$GITHUB_ENV"
           else
@@ -63,7 +63,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build make clang-18 libclang-rt-18-dev
+          sudo apt-get install -y --no-install-recommends ninja-build make clang-18 libclang-rt-18-dev libcurl4-openssl-dev
       - name: Build fuzz targets
         run: |
           cmake --preset fuzz -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
