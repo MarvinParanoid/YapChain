@@ -8,13 +8,18 @@
 - workflow permissions are read-only (no `write` anywhere);
 - every job has `timeout-minutes`; no `continue-on-error` anywhere;
 - every `uses:` is pinned to a full 40-hex commit SHA;
-- ci.yml: the build/test matrix expands (GitHub `include` semantics) to exactly 12 jobs —
-  {x86_64, aarch64} x {gcc, clang} x {debug, release, asan} — each with the right runner, and the
-  reduced long-test scale applies to aarch64/gcc/asan only; the fuzz job runs every fuzz target;
-  the live jobs listed in REQUIRED_LIVE_JOBS check that their tests are registered.
+- ci.yml (the mandatory CI, docs/ci.md): exactly the jobs in MANDATORY_JOBS; the build/test matrix
+  expands (GitHub `exclude`/`include` semantics) to exactly 11 jobs — {x86_64, aarch64} x {gcc, clang}
+  x {debug, release, asan} without aarch64/gcc/asan — each with the right runner and the long tests at
+  full scale; 15 mandatory jobs in all; the fuzz job runs every fuzz target; the live jobs listed in
+  REQUIRED_LIVE_JOBS check that their tests are registered;
+- extended.yml is manual only and runs aarch64/gcc/asan (GCC 14, asan preset, arm64 runner);
+- asan-arm64-diagnose.yml is kept and manual only;
+- CMakePresets.json keeps the sanitizer presets (asan, tsan, fuzz).
 Prints the expanded matrix and exits non-zero on any finding.
 """
 import itertools
+import json
 import os
 import re
 import sys
@@ -27,6 +32,9 @@ except ImportError:  # reported as "skipped" by CTest (SKIP_RETURN_CODE 77), nev
 
 FINDINGS = []
 REQUIRED_LIVE_JOBS = ("live", "tsan")  # jobs that must check the registration of the live tests
+MANDATORY_JOBS = ("build-test", "vectors-reproducible", "fuzz", "live", "tsan")  # ci.yml, all of them
+EXTENDED_ONLY = ("aarch64", "gcc", "asan")  # Tier 2 configuration moved to extended.yml (M2.6.1a)
+SANITIZER_PRESETS = ("asan", "tsan", "fuzz")
 
 
 def finding(msg):
@@ -35,11 +43,14 @@ def finding(msg):
 
 
 def expand(matrix):
-    """GitHub Actions matrix expansion: the product of the axes, then each `include` entry is added to
-    every combination whose ORIGINAL axis values it does not contradict (without overwriting them);
-    an entry that matches no combination becomes a new one. `exclude` is not used here."""
+    """GitHub Actions matrix expansion: the product of the axes minus every combination that matches
+    an `exclude` entry on all of its keys; then each `include` entry is added to every combination
+    whose ORIGINAL axis values it does not contradict (without overwriting them); an entry that
+    matches no combination becomes a new one."""
     axes = {k: v for k, v in matrix.items() if k not in ("include", "exclude")}
     combos = [dict(zip(axes, vals)) for vals in itertools.product(*axes.values())]
+    for exc in matrix.get("exclude", []):
+        combos = [c for c in combos if not all(c.get(k) == v for k, v in exc.items())]
     originals = [dict(c) for c in combos]
     for inc in matrix.get("include", []):
         matched = False
@@ -95,22 +106,33 @@ def main(root):
     if ci is None:
         finding("ci.yml missing")
         return report()
+    if sorted(ci["jobs"]) != sorted(MANDATORY_JOBS):
+        finding(f"ci.yml jobs {sorted(ci['jobs'])}, expected {sorted(MANDATORY_JOBS)}")
+    for name, job in ci["jobs"].items():
+        if "if" in job:
+            finding(f"ci.yml: job '{name}' is conditional (a skipped job is not a pass)")
     combos = expand(ci["jobs"]["build-test"]["strategy"]["matrix"])
     print(f"ci.yml build-test: {len(combos)} jobs")
     for c in combos:
         print("   ", {k: c[k] for k in sorted(c)})
     want = {(a, c, p) for a in ("x86_64", "aarch64") for c in ("gcc", "clang") for p in ("debug", "release", "asan")}
+    want.discard(EXTENDED_ONLY)
     got = {(c.get("arch"), c.get("compiler"), c.get("preset")) for c in combos}
-    if len(combos) != 12 or got != want:
+    if len(combos) != 11 or got != want:
         finding(f"build-test matrix: {len(combos)} jobs, missing {want - got}, unexpected {got - want}")
     runners = {"x86_64": "ubuntu-24.04", "aarch64": "ubuntu-24.04-arm"}
     for c in combos:
         if c.get("runner") != runners.get(c.get("arch")):
             finding(f"build-test {c}: runner {c.get('runner')}")
-        scaled = "long_test_scale" in c
-        target = (c.get("arch"), c.get("compiler"), c.get("preset")) == ("aarch64", "gcc", "asan")
-        if scaled != target:
-            finding(f"build-test {c}: the reduced scale must apply to aarch64/gcc/asan only")
+        if "long_test_scale" in c:
+            finding(f"build-test {c}: the mandatory jobs run the long tests at full scale")
+    bt = json.dumps(ci["jobs"]["build-test"])
+    if "LONG_TEST_SCALE" in bt:
+        finding("ci.yml build-test: the long-test scale must not be reduced in the mandatory CI")
+    total = len(combos) + len(ci["jobs"]) - 1
+    print(f"ci.yml: {total} mandatory jobs")
+    if total != 15:
+        finding(f"ci.yml: {total} mandatory jobs, expected 15")
     fuzz = " ".join(s.get("run", "") for s in ci["jobs"]["fuzz"]["steps"])
     for t in ("ycs", "bech32m", "tx", "devblock", "abci", "rpc"):
         if not re.search(rf"\b{t}\b", fuzz):
@@ -129,9 +151,33 @@ def main(root):
         on = ext.get("on", {})
         if set(on) != {"workflow_dispatch"}:
             finding(f"extended.yml must be manual only, triggers: {sorted(on)}")
-        steps = " ".join(s.get("run", "") for s in ext["jobs"]["extended"]["steps"])
+        steps = " ".join(s.get("run", "") for s in ext["jobs"].get("extended", {}).get("steps", []))
         if 'test "$n" -eq' not in steps:
             finding("extended.yml: the registration of the selected tests is not checked")
+        arm = ext["jobs"].get("arm64-gcc-asan")
+        if arm is None:
+            finding("extended.yml: no 'arm64-gcc-asan' job (aarch64/gcc/asan must run somewhere)")
+        else:
+            steps = " ".join(s.get("run", "") for s in arm.get("steps", []))
+            if arm.get("runs-on") != "ubuntu-24.04-arm":
+                finding(f"extended.yml arm64-gcc-asan: runner {arm.get('runs-on')}")
+            for need in ("CXX=g++-14", "cmake --preset asan", "cmake --build --preset asan", "ctest --preset asan"):
+                if need not in steps:
+                    finding(f"extended.yml arm64-gcc-asan: missing '{need}'")
+    diag = docs.get("asan-arm64-diagnose.yml")
+    if diag is None:
+        finding("asan-arm64-diagnose.yml missing")
+    elif set(diag.get("on", {})) != {"workflow_dispatch"}:
+        finding(f"asan-arm64-diagnose.yml must be manual only, triggers: {sorted(diag.get('on', {}))}")
+    try:
+        with open(os.path.join(root, "CMakePresets.json")) as fh:
+            presets = {p["name"] for p in json.load(fh).get("configurePresets", [])}
+    except (OSError, ValueError, KeyError) as e:
+        finding(f"CMakePresets.json: {e}")
+        presets = set()
+    for p in SANITIZER_PRESETS:
+        if p not in presets:
+            finding(f"CMakePresets.json: no '{p}' configure preset")
     return report()
 
 

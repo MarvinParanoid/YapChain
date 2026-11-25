@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Long scenarios that do not belong in every push: the M2.5 fault scenarios (quorum loss, partitions,
-# latency, crash recovery on tmpfs and on a real filesystem, full node) and the distributed soak.
+# latency, crash recovery on tmpfs and on a real filesystem, full node), the distributed soak, and the
+# full test suite under GCC ASan+UBSan on aarch64 (moved out of ci.yml by M2.6.1a, docs/ci.md).
 # Manual only. A schedule (e.g. weekly: `schedule: - cron: "0 3 * * 1"`) is proposed in docs/ci.md and
 # is NOT enabled.
 name: extended
 
 on:
   workflow_dispatch:
+    inputs:
+      arm64_long_test_scale:
+        description: "aarch64/gcc/asan: scale (1..100 %) of the long-running tests"
+        default: "25"
 
 permissions:
   contents: read
@@ -61,4 +66,39 @@ jobs:
             build/debug/Testing/Temporary/
             /tmp/y*-*/**/*.log
             /tmp/ys-*/report/
+          retention-days: 14
+
+  # GCC 14 ASan+UBSan on aarch64 (Tier 2): the same build and the same 195 tests as the ci.yml
+  # build-test jobs. Run 45678540642: 3516 s of tests at 25 % scale vs 258 s for Clang ASan at full
+  # scale on the same runner; cause not established (asan-arm64-diagnose.yml). The scale reduces the
+  # amount of work of the long tests only, never their checks.
+  arm64-gcc-asan:
+    name: aarch64 / gcc / asan (extended)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build make g++-14 libcurl4-openssl-dev
+          echo "CC=gcc-14" >> "$GITHUB_ENV"; echo "CXX=g++-14" >> "$GITHUB_ENV"
+      - name: Versions
+        run: |
+          "$CXX" --version | head -1; cmake --version | head -1; ninja --version
+          curl-config --version; python3 --version; uname -m
+      - name: Configure
+        env:
+          SCALE: ${{ inputs.arm64_long_test_scale }}
+        run: cmake --preset asan -DYAP_LONG_TEST_SCALE_PERCENT="$SCALE"
+      - name: Build
+        run: cmake --build --preset asan
+      - name: Test
+        run: ctest --preset asan
+      - name: Keep test logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: extended-arm64-gcc-asan
+          path: build/asan/Testing/Temporary/
           retention-days: 14
