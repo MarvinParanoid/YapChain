@@ -195,8 +195,8 @@ def make_transfer(net, nonce, amount, out, sender="alice", to="bob", expires=Non
 
 
 def wait_tx(net, cmt_hash, timeout=30):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout  # immune to wall-clock jumps (host suspend)
+    while time.monotonic() < deadline:
         try:
             return net.rpc("tx", hash="0x" + cmt_hash)
         except ln.LocalnetError:

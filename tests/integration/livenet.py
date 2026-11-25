@@ -65,9 +65,9 @@ POOL = system_address(b"rewards-pool")
 
 def wait_until(cond, timeout, what, interval=0.25):
     """Polls an observable condition with a finite timeout (no fixed sleeps)."""
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout  # immune to wall-clock jumps (host suspend)
     last = None
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         try:
             v = cond()
             if v:

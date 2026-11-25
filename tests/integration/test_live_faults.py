@@ -55,9 +55,9 @@ def frozen(net, nodes, window, settle=4.0):
     Returns the frozen heights."""
     time.sleep(settle)
     start = {n.i: n.height() for n in nodes}
-    t0 = time.time()
+    t0 = time.monotonic()
     samples = 0
-    while time.time() - t0 < window:
+    while time.monotonic() - t0 < window:
         for n in nodes:
             h = n.height()
             check(h == start[n.i], f"{n} committed height {h} (was {start[n.i]}) without a quorum")

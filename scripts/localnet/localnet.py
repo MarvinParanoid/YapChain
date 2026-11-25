@@ -565,8 +565,8 @@ def _spawn(d, name, cmd, env=None, die_with_parent=False):
 
 
 def wait_for(cond, timeout, what):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout  # immune to wall-clock jumps (host suspend)
+    while time.monotonic() < deadline:
         try:
             if cond():
                 return
@@ -607,8 +607,8 @@ def stop_process(d, name, timeout=30):
     if pid is None:
         return None
     os.kill(pid, signal.SIGTERM)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout  # immune to wall-clock jumps (host suspend)
+    while time.monotonic() < deadline:
         try:
             done, status = os.waitpid(pid, os.WNOHANG)
             if done:
