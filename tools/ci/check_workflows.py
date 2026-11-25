@@ -26,7 +26,7 @@ except ImportError:  # reported as "skipped" by CTest (SKIP_RETURN_CODE 77), nev
     sys.exit(77)
 
 FINDINGS = []
-REQUIRED_LIVE_JOBS = ()  # the live / tsan jobs that must check their test registration
+REQUIRED_LIVE_JOBS = ("live", "tsan")  # jobs that must check the registration of the live tests
 
 
 def finding(msg):
@@ -122,6 +122,16 @@ def main(root):
         steps = " ".join(s.get("run", "") for s in ci["jobs"][job]["steps"])
         if "test \"$n\" -eq 3" not in steps:
             finding(f"ci.yml {job}: the registration of the live tests is not checked")
+    ext = docs.get("extended.yml")
+    if ext is None:
+        finding("extended.yml missing")
+    else:
+        on = ext.get("on", {})
+        if set(on) != {"workflow_dispatch"}:
+            finding(f"extended.yml must be manual only, triggers: {sorted(on)}")
+        steps = " ".join(s.get("run", "") for s in ext["jobs"]["extended"]["steps"])
+        if 'test "$n" -eq' not in steps:
+            finding("extended.yml: the registration of the selected tests is not checked")
     return report()
 
 

@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Long scenarios that do not belong in every push: the M2.5 fault scenarios (quorum loss, partitions,
+# latency, crash recovery on tmpfs and on a real filesystem, full node) and the distributed soak.
+# Manual only. A schedule (e.g. weekly: `schedule: - cron: "0 3 * * 1"`) is proposed in docs/ci.md and
+# is NOT enabled.
+name: extended
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  extended:
+    name: ${{ matrix.suite }} (x86_64, gcc, debug)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { suite: fault-scenarios, select: "-L fault", expect: 7 }
+          - { suite: soak, select: "-C soak -R integration:soak", expect: 1 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: "1.27.4"
+          cache: false
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build make g++-14 libcurl4-openssl-dev openssl
+          echo "CC=gcc-14" >> "$GITHUB_ENV"; echo "CXX=g++-14" >> "$GITHUB_ENV"
+      - name: Build CometBFT v0.40.0
+        run: python3 -I scripts/localnet/localnet.py build-cometbft --download --out build/cometbft
+      - name: Configure and build
+        run: |
+          cmake --preset debug -DYAP_COMETBFT_BIN="$PWD/build/cometbft/cometbft"
+          cmake --build --preset debug
+      - name: The selected tests are registered
+        run: |
+          n=$(ctest --preset debug -N ${{ matrix.select }} | grep -c "Test *#")
+          echo "registered: $n"; test "$n" -eq ${{ matrix.expect }}
+      - name: Run
+        run: ctest --preset debug ${{ matrix.select }}
+      - name: Keep logs and reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: extended-${{ matrix.suite }}
+          # Logs and soak reports only (no keys: the soak report holds none, node directories with keys
+          # are not included).
+          path: |
+            build/debug/Testing/Temporary/
+            /tmp/y*-*/**/*.log
+            /tmp/ys-*/report/
+          retention-days: 14
