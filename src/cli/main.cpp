@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// yap — YapChain command-line tool (M1: local wallet, transactions and dev-chain; no network).
+// yap — YapChain command-line tool: local wallet, transactions and dev-chain (M1) and, with
+// YAP_WITH_NETWORK, the network mode `yap network` (M2.6). Local commands never contact a node.
 #include <CLI11.hpp>
 
 #include <sys/resource.h>
@@ -20,7 +21,9 @@ int main(int argc, char** argv) {
     const rlimit no_core{0, 0};
     ::setrlimit(RLIMIT_CORE, &no_core);
     CLI::App app{"yap — YapChain local tool. The economy is real, the value is questionable.\n"
-                 "Exit codes: 0 ok, 1 usage, 2 rejected/invalid, 3 storage, 4 authentication, 5 internal."};
+                 "Exit codes: 0 ok, 1 usage, 2 rejected/invalid, 3 storage, 4 authentication, 5 internal;\n"
+                 "network commands also: 6 network error, 7 not found, 8 unknown outcome, 9 execution failed,\n"
+                 "10 chain mismatch."};
     app.require_subcommand(1);
     Context ctx;
     std::string home;
@@ -38,6 +41,9 @@ int main(int argc, char** argv) {
     register_genesis(app, ctx);
     register_dev(app, ctx);
     register_query(app, ctx);
+#ifdef YAP_WITH_NETWORK
+    register_network(app, ctx);
+#endif
 
     try {
         app.parse(argc, argv);

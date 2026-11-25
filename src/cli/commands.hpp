@@ -16,6 +16,7 @@ void register_tx(CLI::App& app, Context& ctx);
 void register_genesis(CLI::App& app, Context& ctx);
 void register_dev(CLI::App& app, Context& ctx);
 void register_query(CLI::App& app, Context& ctx);
+void register_network(CLI::App& app, Context& ctx);  // only with YAP_WITH_NETWORK
 
 chain::Genesis load_genesis(const std::filesystem::path& path);
 

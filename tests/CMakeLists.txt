@@ -126,6 +126,7 @@ if(YAP_BUILD_TESTS)
     target_link_libraries(yap_rpc_fuzz_smoke PRIVATE yap::rpc)
     yap_target_warnings(yap_rpc_fuzz_smoke)
     add_test(NAME fuzz_smoke_rpc COMMAND yap_rpc_fuzz_smoke 200000)
+    add_test(NAME cli:net_config COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_net_config.py $<TARGET_FILE:yap>)
   endif()
 
   # Crash-recovery tests fork child processes that are killed with SIGKILL.
