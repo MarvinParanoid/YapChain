@@ -6,7 +6,7 @@
 
 | Решение | Значение |
 |---|---|
-| Язык ядра | C++20 |
+| Язык ядра | C++23 (ADR-0030; до M2.6.2 — C++20) |
 | Модель ledger | account-based |
 | Валюта | YAP, genesis + эмиссия за блоки |
 | Консенсус | permissioned BFT, 4 валидатора на старте |
@@ -70,8 +70,8 @@ flowchart TB
 ```
 
 ### 3.1 common
-Типы `Bytes`, `Hash32`, `AccountId`, `Result<T, Error>` (через `std::expected`-подобный тип; C++23 `std::expected`
-недоступен в C++20, поэтому собственный минимальный тип или `tl::expected`), checked-арифметика
+Типы `Bytes`, `Hash32`, `AccountId`, `Result<T, Error>` (собственный `std::expected`-подобный тип: `std::expected`
+недоступен в поддерживаемых Clang 17/18 с libstdc++, ADR-0030), checked-арифметика
 `checked_add/sub/mul` для `uint64_t`, `mul_div_floor(a, b, c)` через `unsigned __int128`.
 
 ### 3.2 codec

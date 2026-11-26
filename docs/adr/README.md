@@ -5,7 +5,7 @@
 
 | ADR | Тема | Статус |
 |---|---|---|
-| [0001](0001-record-decisions.md) | Ведение решений и статусов | DECIDED |
+| [0001](0001-record-decisions.md) | Ведение решений и статусов | DECIDED; язык C++20 заменён ADR-0030 |
 | [0002](0002-consensus-engine.md) | CometBFT через ABCI++ как консенсус-движок | DECIDED через ADR-0012 |
 | [0003](0003-canonical-serialization.md) | Каноническая сериализация YCS | PROPOSED |
 | [0004](0004-cryptography.md) | Ed25519 (libsodium), SHA-256, tagged hashing | PROPOSED, уточнён ADR-0014 |
@@ -34,3 +34,4 @@
 | [0027](0027-cometbft-acquisition.md) | Получение CometBFT и protobuf: сборка из проверенных исходников | DECIDED |
 | [0028](0028-abci-adapter.md) | ABCI++ адаптер: синхронизация, fail-stop, InitChain, Query | DECIDED |
 | [0029](0029-rpc-client.md) | Клиент CometBFT RPC: libcurl, ограничения, строгий JSON-RPC, доверие | DECIDED |
+| [0030](0030-cxx23.md) | C++23 — язык проекта; пары компилятор + libstdc++, политика возможностей | DECIDED |
