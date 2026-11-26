@@ -6,7 +6,10 @@ project(YapChain
   DESCRIPTION "YapChain: the economy is real, the value is questionable"
   LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+# C++23 for all first-party code (ADR-0030). REQUIRED: a compiler without C++23 mode fails at
+# configure time instead of silently falling back; tests/CMakeLists.txt also checks the effective
+# -std of every first-party compile command (ci:cxx-standard).
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

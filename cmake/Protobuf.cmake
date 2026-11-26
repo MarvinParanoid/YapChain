@@ -10,6 +10,11 @@
 # uninstrumented libprotobuf growing the same buffers produces false "container-overflow" reports;
 # TSan likewise needs every thread-touching library instrumented. UBSan is not applied to the
 # dependencies — only the project's own code is held to -fno-sanitize-recover.
+#
+# The dependencies stay at C++20 while the project uses C++23 (ADR-0030): abseil's installed
+# options.h fixes every ABSL_OPTION_* (no per-standard detection), and the only C++23-dependent code
+# in the installed abseil/protobuf headers is an extra absl::byteswap overload and the implementation
+# of ABSL_UNREACHABLE/ABSL_ASSUME, neither of which changes a type layout or an exported symbol.
 
 set(YAP_ABSEIL_VERSION 20260817.0)
 set(YAP_ABSEIL_SHA256 f7e05179df39c45434cad433f5783840bb3788ef322976f9138bc6b72b3a107d)

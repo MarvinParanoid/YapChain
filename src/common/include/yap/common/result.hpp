@@ -8,7 +8,8 @@
 
 namespace yap {
 
-/// Error wrapper used to construct a failed Result (C++20 has no std::expected).
+/// Error wrapper used to construct a failed Result. std::expected stays unused: Clang 17/18 with libstdc++
+/// (the supported Clang toolchains) do not provide it (ADR-0030).
 template <class E>
 struct Unexpected {
     E error;

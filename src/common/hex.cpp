@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "yap/common/hex.hpp"
 
+// ADR-0030: the project is C++23 (GCC 13 reports 202100L in C++23 mode, every later supported
+// compiler 202302L); a build that fell back to C++20 (202002L) stops here.
+static_assert(__cplusplus > 202002L, "YapChain requires C++23 (ADR-0030)");
+
 namespace yap {
 namespace {
 
