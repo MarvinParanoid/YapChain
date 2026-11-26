@@ -37,10 +37,13 @@ endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
   message(FATAL_ERROR "GCC >= 13 required")
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17)
-  message(FATAL_ERROR "Clang >= 17 required")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 18)
+  # ADR-0030: Clang 17 cannot compile the C++23 std::tuple of libstdc++ 14 (make_tuple/forward_as_tuple,
+  # used by Catch2 and Abseil), so C++23 requires Clang 18.
+  message(FATAL_ERROR "Clang ${CMAKE_CXX_COMPILER_VERSION} is not supported: YapChain is C++23 and requires "
+    "Clang >= 18 (or GCC >= 13). Clang 17 fails on the C++23 std::tuple of libstdc++ 14 (docs/adr/0030-cxx23.md).")
 elseif(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
-  message(FATAL_ERROR "Supported compilers: GCC >= 13, Clang >= 17")
+  message(FATAL_ERROR "Supported compilers: GCC >= 13, Clang >= 18 (C++23, libstdc++)")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)

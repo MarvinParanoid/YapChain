@@ -81,8 +81,8 @@ yap network tx <HASH>                                # результат по �
 
 ## Сборка и тесты
 
-Требования: Linux x86_64 или aarch64, CMake ≥ 3.25, Ninja, make, компилятор C++23 — GCC ≥ 13 или Clang ≥ 17 со
-стандартной библиотекой libstdc++ (libc++ не поддерживается; Clang 17 — только с libstdc++ 13), Python 3 (для векторов). Проверенные пары компилятор +
+Требования: Linux x86_64 или aarch64, CMake ≥ 3.25, Ninja, make, компилятор C++23 — GCC ≥ 13 или Clang ≥ 18 со
+стандартной библиотекой libstdc++ (libc++ не поддерживается), Python 3 (для векторов). Проверенные пары компилятор +
 libstdc++ и доступные возможности C++23 — в [ADR-0030](docs/adr/0030-cxx23.md); в CI — GCC 14 и Clang 18.
 Зависимости (libsodium 1.0.22, Catch2 3.16.1, nlohmann/json 3.12.0, LMDB 0.9.36, CLI11 2.7.2, а для ABCI —
 abseil 20260817.0 и protobuf v36.2) скачиваются CMake и проверяются по SHA-256 (офлайн: `-DYAP_DEPS_DIR=<каталог>`).

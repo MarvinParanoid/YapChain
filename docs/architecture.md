@@ -71,7 +71,7 @@ flowchart TB
 
 ### 3.1 common
 Типы `Bytes`, `Hash32`, `AccountId`, `Result<T, Error>` (собственный `std::expected`-подобный тип: `std::expected`
-недоступен в поддерживаемых Clang 17/18 с libstdc++, ADR-0030), checked-арифметика
+недоступен в Clang 18 с libstdc++, ADR-0030), checked-арифметика
 `checked_add/sub/mul` для `uint64_t`, `mul_div_floor(a, b, c)` через `unsigned __int128`.
 
 ### 3.2 codec
@@ -282,7 +282,7 @@ YapChain/
 
 Правила зависимостей: модули `core` не зависят от `storage`-реализаций (только от интерфейса),
 от адаптеров консенсуса, RPC, сети и логгера (логирование — через абстрактный sink).
-Компиляторы: GCC ≥ 13, Clang ≥ 17; `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror` в CI.
+Компиляторы: GCC ≥ 13, Clang ≥ 18 (C++23, ADR-0030); `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror` в CI.
 
 ## 10. Зависимости (PROPOSED)
 
