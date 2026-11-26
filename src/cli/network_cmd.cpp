@@ -14,6 +14,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <utility>
 
 #include "commands.hpp"
 #include "network_config.hpp"
@@ -459,7 +460,7 @@ void broadcast_and_report(Session& s, Report& r, ByteView bytes, std::optional<s
         r.finish();
         throw ReportedError(kExitUnknown, std::string(e.what()) + recheck);
     } catch (const rpc::RpcError& e) {
-        if (e.data().find("tx already exists in cache") == std::string::npos) {
+        if (!e.data().contains("tx already exists in cache")) {
             r.str("status", "not_accepted");
             r.str("node_error", e.data().empty() ? e.message() : e.data());
             r.finish();
@@ -482,7 +483,7 @@ void broadcast_and_report(Session& s, Report& r, ByteView bytes, std::optional<s
         r.finish();
         throw ReportedError(kExitUnknown, "the node answered for another hash " + br.hash + recheck);
     }
-    if (br.code == static_cast<std::uint32_t>(tx::TxCode::ErrNonce)) {
+    if (br.code == std::to_underlying(tx::TxCode::ErrNonce)) {
         // The sender's nonce is already used — possibly by this very transaction. Never report that as
         // "not executed": look it up, and say so when it cannot be established.
         std::optional<rpc::TxResult> t;
@@ -675,7 +676,7 @@ void wait_final(Session& s, Report& r, const Hash32& hash, std::optional<std::ui
                 grace_end = std::min(deadline, Clock::now() + grace);
             }
         } catch (const rpc::RpcError& e) {
-            if (e.data().find("transaction indexing is disabled") != std::string::npos) {
+            if (e.data().contains("transaction indexing is disabled")) {
                 throw CliError(kExitNetwork, "the node does not index transactions (tx_index.indexer = \"null\"); "
                                              "confirmation needs a node with the \"kv\" indexer");
             }

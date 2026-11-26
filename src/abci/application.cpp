@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <utility>
 
 #include "yap/abci/convert.hpp"
 #include "yap/common/fail_stop.hpp"
@@ -37,7 +38,7 @@ void set_events(google::protobuf::RepeatedPtrField<pb::Event>& out, const std::v
 }
 
 void query_error(pb::ResponseQuery& r, QueryCode code, const std::string& log) {
-    r.set_code(static_cast<std::uint32_t>(code));
+    r.set_code(std::to_underlying(code));
     r.set_codespace(kQueryCodespace);
     r.set_log(log);
 }
@@ -342,7 +343,7 @@ void Application::query(const pb::RequestQuery& req, pb::ResponseQuery& r) const
     } else {
         return query_error(r, QueryCode::UnknownPath, "unknown path '" + path + "' (use /chain, /params, /account/<addr>)");
     }
-    r.set_code(static_cast<std::uint32_t>(QueryCode::Ok));
+    r.set_code(std::to_underlying(QueryCode::Ok));
     r.set_value(j.dump());
 }
 
@@ -351,7 +352,7 @@ void Application::check_tx(const pb::RequestCheckTx& req, pb::ResponseCheckTx& r
     // re-sends the remaining mempool transactions in order, so they are re-validated sequentially.
     const auto& tx = req.tx();
     const auto res = engine_.check_tx(ByteView(reinterpret_cast<const Byte*>(tx.data()), tx.size()));
-    r.set_code(static_cast<std::uint32_t>(res.code));
+    r.set_code(std::to_underlying(res.code));
     r.set_log(res.log.empty() ? std::string(tx::to_string(res.code)) : res.log);
 }
 
@@ -384,7 +385,7 @@ void Application::finalize_block(const pb::RequestFinalizeBlock& req, pb::Respon
     if (result.tx_results.size() != ctx.txs.size()) throw FailStop("FinalizeBlock: result count differs from tx count");
     for (const auto& t : result.tx_results) {
         auto* e = r.add_tx_results();
-        e->set_code(static_cast<std::uint32_t>(t.code));
+        e->set_code(std::to_underlying(t.code));
         e->set_log(t.log);
         set_events(*e->mutable_events(), t.events);
     }

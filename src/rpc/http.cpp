@@ -73,10 +73,10 @@ std::string check_endpoint(const std::string& url) {
     const auto host_end = rest.find_first_of("/?#");
     const std::string authority = rest.substr(0, host_end);
     if (authority.empty()) return "the RPC endpoint has no host";
-    if (authority.find('@') != std::string::npos) {
+    if (authority.contains('@')) {
         return "the RPC endpoint must not contain credentials (user:password@)";
     }
-    if (url.find('#') != std::string::npos) return "the RPC endpoint must not contain a fragment";
+    if (url.contains('#')) return "the RPC endpoint must not contain a fragment";
     for (const char c : url) {
         if (static_cast<unsigned char>(c) <= 0x20 || static_cast<unsigned char>(c) >= 0x7f) {
             return "the RPC endpoint contains spaces or non-ASCII characters";

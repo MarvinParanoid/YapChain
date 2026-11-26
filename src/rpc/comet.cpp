@@ -341,8 +341,8 @@ std::optional<BlockInfo> Client::block(std::optional<std::uint64_t> height) {
     } catch (const RpcError& e) {
         // "height H must be less than or equal to the current blockchain height T" /
         // "height H is not available, lowest height is L"
-        if (e.data().find("must be less than or equal to the current blockchain height") != std::string::npos ||
-            e.data().find("is not available") != std::string::npos) {
+        if (e.data().contains("must be less than or equal to the current blockchain height") ||
+            e.data().contains("is not available")) {
             return std::nullopt;
         }
         throw;
