@@ -76,6 +76,12 @@ if(YAP_BUILD_TESTS)
   # The checker itself reports every weakening of the mandatory CI (negative cases).
   add_test(NAME ci:workflows-checker COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/ci/test_check_workflows.py ${PROJECT_SOURCE_DIR})
   set_tests_properties(ci:workflows-checker PROPERTIES SKIP_RETURN_CODE 77)
+  # Every first-party translation unit of this build is compiled as C++23 (ADR-0030), checked from the
+  # actual compile commands, so each CI job proves it for its own compiler and architecture.
+  add_test(NAME ci:cxx-standard COMMAND Python3::Interpreter -I ${PROJECT_SOURCE_DIR}/tools/ci/check_cxx_standard.py
+    ${CMAKE_BINARY_DIR} ${PROJECT_SOURCE_DIR})
+  set_tests_properties(ci:cxx-standard PROPERTIES SKIP_RETURN_CODE 77)
+  add_test(NAME ci:cxx-standard-checker COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/ci/test_check_cxx_standard.py)
   add_test(NAME e2e:workflow COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/e2e/test_e2e_workflow.py $<TARGET_FILE:yap>)
   add_test(NAME cli:tx COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_tx_cli.py $<TARGET_FILE:yap>)
 

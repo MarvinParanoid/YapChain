@@ -60,6 +60,9 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      - name: Effective C++ standard (every first-party TU is C++23, ADR-0030)
+        run: python3 -I tools/ci/check_cxx_standard.py build/${{ matrix.preset }} .
+
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
@@ -96,6 +99,8 @@ jobs:
         run: |
           cmake --preset fuzz -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
           cmake --build --preset fuzz
+      - name: Effective C++ standard (every first-party TU is C++23, ADR-0030)
+        run: python3 -I tools/ci/check_cxx_standard.py build/fuzz .
       - name: Run each target for 120 s
         run: |
           for t in ycs bech32m tx devblock abci rpc; do
@@ -140,6 +145,8 @@ jobs:
         run: |
           cmake --preset debug -DYAP_COMETBFT_BIN="$PWD/build/cometbft/cometbft"
           cmake --build --preset debug
+      - name: Effective C++ standard (every first-party TU is C++23, ADR-0030)
+        run: python3 -I tools/ci/check_cxx_standard.py build/debug .
       - name: The live tests are registered (an empty selection is a failure)
         run: |
           n=$(ctest --preset debug -N -R "$LIVE_TESTS" | grep -c "Test *#")
@@ -183,6 +190,8 @@ jobs:
         run: |
           cmake --preset tsan -DYAP_COMETBFT_BIN="$PWD/build/cometbft/cometbft"
           cmake --build --preset tsan
+      - name: Effective C++ standard (every first-party TU is C++23, ADR-0030)
+        run: python3 -I tools/ci/check_cxx_standard.py build/tsan .
       - name: The live tests are registered
         run: |
           n=$(ctest --preset tsan -N -R "integration:(live_cometbft|live_multival|live_netcli)$" | grep -c "Test *#")

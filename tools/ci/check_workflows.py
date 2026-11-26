@@ -12,7 +12,9 @@
   expands (GitHub `exclude`/`include` semantics) to exactly 11 jobs — {x86_64, aarch64} x {gcc, clang}
   x {debug, release, asan} without aarch64/gcc/asan — each with the right runner and the long tests at
   full scale; 15 mandatory jobs in all; the fuzz job runs every fuzz target; the live jobs listed in
-  REQUIRED_LIVE_JOBS check that their tests are registered;
+  REQUIRED_LIVE_JOBS check that their tests are registered; every compiling job (CXX_STD_CHECKED) checks
+  the effective C++23 standard of its own build directory (tools/ci/check_cxx_standard.py, ADR-0030), and
+  the build/test jobs run the whole CTest suite without filters;
 - extended.yml is manual only and runs aarch64/gcc/asan (GCC 14, asan preset, arm64 runner);
 - asan-arm64-diagnose.yml is kept and manual only;
 - CMakePresets.json keeps the sanitizer presets (asan, tsan, fuzz).
@@ -32,6 +34,9 @@ except ImportError:  # reported as "skipped" by CTest (SKIP_RETURN_CODE 77), nev
 
 FINDINGS = []
 REQUIRED_LIVE_JOBS = ("live", "tsan")  # jobs that must check the registration of the live tests
+# Jobs that compile first-party code, and the build directory whose compile commands each must check.
+CXX_STD_CHECKED = {"build-test": "build/${{ matrix.preset }}", "fuzz": "build/fuzz", "live": "build/debug",
+                   "tsan": "build/tsan"}
 MANDATORY_JOBS = ("build-test", "vectors-reproducible", "fuzz", "live", "tsan")  # ci.yml, all of them
 EXTENDED_ONLY = ("aarch64", "gcc", "asan")  # Tier 2 configuration moved to extended.yml (M2.6.1a)
 SANITIZER_PRESETS = ("asan", "tsan", "fuzz")
@@ -137,6 +142,14 @@ def main(root):
     for t in ("ycs", "bech32m", "tx", "devblock", "abci", "rpc"):
         if not re.search(rf"\b{t}\b", fuzz):
             finding(f"fuzz job does not run fuzz_{t}")
+    for job, build_dir in CXX_STD_CHECKED.items():
+        steps = [s.get("run", "") for s in ci["jobs"].get(job, {}).get("steps", [])]
+        if not any(f"python3 -I tools/ci/check_cxx_standard.py {build_dir} ." in r for r in steps):
+            finding(f"ci.yml {job}: the effective C++23 standard of {build_dir} is not checked")
+    bt_steps = [s.get("run", "").strip() for s in ci["jobs"]["build-test"]["steps"]]
+    if "ctest --preset ${{ matrix.preset }}" not in bt_steps or any(
+            r.startswith("ctest") and r != "ctest --preset ${{ matrix.preset }}" for r in bt_steps):
+        finding("ci.yml build-test: the test step must be exactly `ctest --preset ${{ matrix.preset }}` (whole suite)")
     for job in REQUIRED_LIVE_JOBS:
         if job not in ci["jobs"]:
             finding(f"ci.yml: no '{job}' job")
