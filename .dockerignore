@@ -1,0 +1,24 @@
+# Docker build context = whitelist (M2.7, ADR-0031). Everything is excluded except the sources the images
+# are built from, so build directories, node directories, keystores, password files, databases and .git
+# can never reach a build context or an image layer, wherever they happen to be in the working tree.
+*
+!CMakeLists.txt
+!CMakePresets.json
+!LICENSE
+!cmake/
+!src/
+!third_party/
+!tools/ci/check_cxx_standard.py
+!tools/deps/fetch_deps.py
+!scripts/localnet/localnet.py
+!docker/
+# never, even inside whitelisted directories
+**/*.key
+**/*.pem
+**/*.password
+**/*.keystore.json
+**/priv_validator_key.json
+**/priv_validator_state.json
+**/node_key.json
+**/*.mdb
+**/__pycache__

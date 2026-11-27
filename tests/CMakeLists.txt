@@ -101,6 +101,10 @@ if(YAP_BUILD_TESTS)
     target_link_libraries(yap_abci_fuzz_smoke PRIVATE yap::abci)
     yap_target_warnings(yap_abci_fuzz_smoke)
     add_test(NAME fuzz_smoke_abci COMMAND yap_abci_fuzz_smoke ${_yap_fuzz_iter_abci})
+    # Container health/readiness probe against the real yapd and against impostor servers (M2.7).
+    add_test(NAME node:abci_probe
+      COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/node/test_abci_probe.py
+              $<TARGET_FILE:yap_abci_probe> $<TARGET_FILE:yapd>)
     # The production yapd has no crash hooks; only yapd-test-hooks does (M2.4f).
     add_test(NAME node:no_test_hooks_in_yapd
       COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/node/test_yapd_hooks.py

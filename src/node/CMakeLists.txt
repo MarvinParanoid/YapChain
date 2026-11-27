@@ -13,3 +13,9 @@ if(YAP_BUILD_TESTS)
   target_compile_definitions(yapd_test_hooks PRIVATE YAP_VERSION="${PROJECT_VERSION}" YAPD_TEST_HOOKS=1)
   yap_target_warnings(yapd_test_hooks)
 endif()
+
+# ABCI readiness/health probe for containers (M2.7): plain POSIX, no protobuf, so the same binary is
+# also copied into the CometBFT image.
+add_executable(yap_abci_probe abci_probe.cpp)
+set_target_properties(yap_abci_probe PROPERTIES OUTPUT_NAME yap-abci-probe)
+yap_target_warnings(yap_abci_probe)
