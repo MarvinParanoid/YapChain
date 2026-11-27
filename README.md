@@ -41,9 +41,10 @@ YapChain — open-source блокчейн мемной экосистемы с �
   подписанных локальным keystore (или офлайн), и ожидание финализации через RPC CometBFT с проверкой chain id
   ([docs/cli-network.md](docs/cli-network.md)).
 - **M2.6.2 C++23** — принят: весь собственный код — C++23 (GCC ≥ 13, Clang ≥ 18), протокол не изменился.
-- **M2.7 Docker** — в приёмке: воспроизводимые образы `yapd`/`yap` и CometBFT, Compose для одиночной ноды,
+- **M2.7 Docker** — принят: воспроизводимые образы `yapd`/`yap` и CometBFT, Compose для одиночной ноды,
   четырёх валидаторов и full node, инициализация, состояние, резервное копирование и восстановление
-  ([docs/operations.md](docs/operations.md)).
+  ([docs/operations.md](docs/operations.md)). Образы и приёмочный набор проверены нативно на x86_64 и aarch64
+  в CI (раннеры GitHub); развёртывания на внешних aarch64-хостах не проверялись.
 - M2.8+ — впереди, см. [docs/roadmap.md](docs/roadmap.md).
 
 Локальная сеть из четырёх валидаторов ([scripts/localnet](scripts/localnet/README.md)) выдерживает отказ одного

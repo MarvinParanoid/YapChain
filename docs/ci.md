@@ -294,6 +294,11 @@ python3 -I tools/cxx23-probes/run_probes.py --tc "GCC 14=g++-14" \
 (сначала x86_64, aarch64 — после подтверждения стабильности нативного прогона); soak — по ручному запуску перед
 релизом образов. До решения workflow информационный.
 
+**Итог приёмки M2.7 (коммит `2a1cd1c`):** `images` зелёные на обеих архитектурах в двух прогонах подряд — push
+(run 45988348582) и ручной запуск с soak (run 46015785139); soak (x86_64) — 1040 блоков, 10 отказов всех 7 видов,
+модель и `verify-state` пяти баз совпали (operations.md §15). Политика выше не применена: workflow остаётся
+информационным до решения владельца. aarch64 проверен только на раннере GitHub `ubuntu-24.04-arm`.
+
 ## Долгие сценарии (`.github/workflows/extended.yml`)
 Только ручной запуск (`workflow_dispatch`): сценарии отказов M2.5 (`-L fault`, 7 тестов: infra, quorum, partition,
 latency, crash, crash_disk, fullnode) и soak (`-C soak`), x86_64, GCC 14 Debug, по 180 минут. Перед запуском
