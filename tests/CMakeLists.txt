@@ -88,6 +88,9 @@ if(YAP_BUILD_TESTS)
   # Stale ABCI socket oracle of the container suite (M2.7.1): judged by connect/Echo behaviour, never by
   # inode or timestamps; real Unix sockets in a temporary directory, no Docker or privileges.
   add_test(NAME docker:socket-oracle COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/docker/test_socket_oracle.py)
+  # Final state verification of the container suite (M2.7.2): quiescence over a whole window, coverage
+  # through the quiescent height, reference root per durable height; simulated clock, no Docker.
+  add_test(NAME docker:final-state COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/docker/test_final_state.py)
   add_test(NAME e2e:workflow COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/e2e/test_e2e_workflow.py $<TARGET_FILE:yap>)
   add_test(NAME cli:tx COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_tx_cli.py $<TARGET_FILE:yap>)
 

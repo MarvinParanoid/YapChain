@@ -3,7 +3,10 @@
 """Container acceptance suite (M2.7): the real images (yapchain, yapchain-cometbft), the real compose
 files and scripts/ops/yapnode.py, on one Docker host.
 
-    test_container_suite.py [--keep] [--only S1,M2,...] [--base DIR]
+    test_container_suite.py [--keep] [--only single,network,final] [--shutdown-delay S] [--base DIR]
+
+`--only final` runs just the final verification (quiescence, references through F, offline roots) on a
+fresh network, optionally with a deliberately slow shutdown (--shutdown-delay).
 
 Images must exist (python3 -I scripts/ops/yapnode.py build, or YAPCHAIN_IMAGE / COMETBFT_IMAGE).
 Scenario numbers follow the M2.7 checklist (1-20). Everything is checked against the independent state
@@ -27,6 +30,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import abci_socket  # noqa: E402
+import final_state  # noqa: E402
 import dockernet as dn  # noqa: E402
 from dockernet import Fail, check, wait_until, step, sh, DOCKER  # noqa: E402
 import livenet  # noqa: E402
@@ -602,27 +606,133 @@ def run_network(base, keep):
         REPORT["scenarios"]["20"] = "ok"
 
         step("end", "final: model for every account on every node, identical chain, verify-state of every database")
-        hi = net.min_height() - 1
-        livenet.check_same_chain(net, net.nodes, hi, lo=max(1, hi - 60))
-        for n in net.nodes:
-            livenet.check_node_state(net, model, n, dn.all_accounts(net))
-        roots = {}
-        net.down()
-        for n in net.nodes:
-            vs = net.verify_state(n)
-            roots[n.name] = (int(vs["height"]), vs["state_root"])
-            n.roots()
-        common = min(h for h, _ in roots.values())
-        st = model.at(common)
-        REPORT["final"] = {"roots": roots, "minted": st["minted"], "burned": st["burned"],
-                           "transactions": len(model.included)}
-        note(f"verify-state ok on {len(roots)} databases; {len(model.included)} transactions executed exactly once")
+        final_verification(net, model)
         REPORT["scenarios"]["end"] = "ok"
     finally:
         if not keep:
             net.destroy()
             shutil.rmtree(os.path.join(net.base, "restored"), ignore_errors=True)
             shutil.rmtree(os.path.join(net.base, "net", "validator3.decommissioned"), ignore_errors=True)
+
+
+# ------------------------------------------------------------------ final verification (M2.7.2)
+#
+# Deterministic regardless of shutdown speed (tests/docker/final_state.py): the network is brought to a
+# quiescent height F (two of four validators stopped: no quorum), the model and the reference roots are
+# extended through F from block data, and every durable database must then be at a height <= F that
+# both cover, with the reference root of its own height.
+
+QUIET_WINDOW_S = 10.0     # no commit for this long on any remaining node (timeout_commit is 1 s)
+QUIET_DEADLINE_S = 120.0
+
+
+def app_height(n):
+    return int(n.rpc("abci_info")["response"].get("last_block_height") or 0)
+
+
+def heights_of(nodes):
+    return {n.name: (n.height(), app_height(n)) for n in nodes}
+
+
+def yap_genesis(net):
+    with open(os.path.join(net.nodes[0].dir, "cometbft", "config", "genesis.json")) as f:
+        return json.load(f)["app_state"]
+
+
+def final_verification(net, model, shutdown_delay=0.0):
+    nodes = list(net.nodes)
+    # 1. The existing checks while every node runs: same chain, every account = model on every node.
+    hi = net.min_height() - 1
+    livenet.check_same_chain(net, nodes, hi, lo=max(1, hi - 60))
+    for n in nodes:
+        livenet.check_node_state(net, model, n, dn.all_accounts(net))
+    # 2. Quiescence. The suite submits transactions synchronously only; none may still be pending.
+    wait_until(lambda: all(int(n.rpc("num_unconfirmed_txs")["n_txs"]) == 0 for n in nodes), 60,
+               "empty mempools (no transaction submission in flight)")
+    stop = net.validators[2:4]
+    rest = [n for n in nodes if n not in stop]
+    for i, n in enumerate(stop):
+        if i:   # the first stopped validator falls behind: databases end at different valid heights
+            net.wait_height(net.min_height(rest + stop[i:]) + 2, nodes=rest + stop[i:], timeout=120)
+        pids = {w: n.state(w)["pid"] for w in ("yapd", "cometbft")}
+        for w in ("yapd", "cometbft"):
+            sh([DOCKER, "update", "--restart", "no", n.container(w)])   # cannot restart automatically
+        n.stop()
+        for w, pid in pids.items():
+            wait_terminated(n, w, pid)
+    vs = model.valset(rest[0])
+    online = sum(livenet.POWER for v in net.validators if v not in stop)
+    check(3 * online <= 2 * livenet.POWER * len(vs), f"quorum still present: online power {online} of {livenet.POWER * len(vs)}")
+    F, nobs, span = final_state.wait_quiescent(lambda: heights_of(rest), QUIET_WINDOW_S, QUIET_DEADLINE_S)
+    note(f"quorum lost ({[str(n) for n in stop]} stopped, restart policy off); quiescent at F={F} on "
+         f"{[str(n) for n in rest]}: {nobs} identical observations over {span}s")
+    # 3. Extend both independent references through F from block data; RPC comparisons at F.
+    model.extend(F, rest[0])
+    ref = final_state.ReferenceRoots(yap_genesis(net))
+    for h in range(1, F + 1):
+        blk = rest[0].block(h)["block"]
+        check(blk["header"]["app_hash"].lower() == ref.roots[h - 1],
+              f"header {h} app_hash {blk['header']['app_hash']} != reference root of {h - 1} {ref.roots[h - 1]}")
+        ref.apply_block(blk, vs)
+    final_state.cross_check(model.at(F), ref.chain)
+    livenet.check_same_chain(net, rest, F, lo=max(1, hi - 1))
+    for n in rest:
+        check(livenet.check_node_state(net, model, n, dn.all_accounts(net)) == F, f"{n}: state not answered at {F}")
+    final_state.confirm_still(lambda: heights_of(rest), F, QUIET_WINDOW_S)
+    note(f"model and reference roots extended through {F}; Header(h+1).AppHash = reference root of h for 0..{F - 1}; "
+         f"balances, nonces, issuance and burns of model and reference agree; still {F} after another "
+         f"{QUIET_WINDOW_S:.0f}s")
+    # 4. Shutdown (optionally slow: node by node with a delay, observing the others in between).
+    if shutdown_delay:
+        for i, n in enumerate(rest):
+            time.sleep(shutdown_delay)   # deliberate delay injection (not synchronisation)
+            n.stop()
+            others = rest[i + 1:]
+            if others:
+                final_state.confirm_still(lambda: heights_of(others), F, 1.0, min_obs=2)
+        note(f"delayed shutdown: {len(rest)} nodes stopped one by one, {shutdown_delay}s apart; still {F}")
+    net.down()
+    # 5. Offline: every durable database against the references at its own height.
+    durable = {}
+    for n in nodes:
+        vs_out = net.verify_state(n)
+        durable[n.name] = (int(vs_out["height"]), vs_out["state_root"])
+        n.roots()   # raises if any height was committed twice
+    common = final_state.verify_final(durable, F, set(model.states), ref.roots)
+    st = model.at(common)
+    REPORT["final"] = {"quiescent_height": F, "durable": durable, "minted": st["minted"], "burned": st["burned"],
+                       "transactions": len(model.included)}
+    note(f"verify-state ok on {len(durable)} databases at heights {sorted({h for h, _ in durable.values()})} "
+         f"(all <= F={F}), each root = reference root of its height; {len(model.included)} transactions executed "
+         f"exactly once")
+    return F, durable
+
+
+def run_final(base, keep, shutdown_delay):
+    """The final verification alone, on a fresh four-validator network with a full node and transactions
+    (repeatable; --shutdown-delay stops the remaining nodes slowly)."""
+    net = dn.DockerNet(os.path.join(base, "final"), validators=4, full_nodes=1, project="yapfinal",
+                       rpc_port_base=36757, subnet_prefix="172.31.243")
+    model = livenet.Model(net)
+    try:
+        step("end*", f"final verification on a fresh network (shutdown delay {shutdown_delay}s)")
+        net.up()
+        net.wait_height(4, timeout=180)
+        res = network_transfer(net, net.nodes[0], "alice", "bob", "7YAP")
+        check(res.get("status") == "finalized", f"transfer result {res}")
+        register_by_hash(model, net.nodes[0], res["hash"], "transfer", net.addresses["alice"], 7 * livenet.YIP,
+                         net.addresses["bob"])
+        tx_hex, th = net.make_tx("burn", "carol", 0, 2 * livenet.YIP)
+        model.register(tx_hex, "burn", "carol", 2 * livenet.YIP)
+        net.nodes[1].broadcast(tx_hex)
+        net.wait_included(th)
+        net.wait_height(net.min_height() + 2)
+        F, durable = final_verification(net, model, shutdown_delay)
+        REPORT["scenarios"]["end*"] = "ok"
+        REPORT.setdefault("final_runs", []).append({"F": F, "durable": durable, "shutdown_delay": shutdown_delay})
+    finally:
+        if not keep:
+            net.destroy()
 
 
 # Private key material in any encoding a tool would write: PEM/OpenSSH/PKCS#8 private keys and PGP secret keys
@@ -705,6 +815,8 @@ def main(argv):
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--base")
     ap.add_argument("--only", default="single,network")
+    ap.add_argument("--shutdown-delay", type=float, default=0.0,
+                    help="--only final: stop the remaining nodes one by one this many seconds apart")
     a = ap.parse_args(argv)
     base = os.path.abspath(a.base) if a.base else tempfile.mkdtemp(prefix="yapdock-", dir=os.environ.get("YAP_DOCKER_TEST_DIR", "/tmp"))
     os.makedirs(base, exist_ok=True)
@@ -715,6 +827,8 @@ def main(argv):
             run_single(base, a.keep)
         if "network" in a.only:
             run_network(base, a.keep)
+        if "final" in a.only.split(","):
+            run_final(base, a.keep, a.shutdown_delay)
     except Fail as e:
         ok = False
         print(f"FAILED: {e}", file=sys.stderr)
