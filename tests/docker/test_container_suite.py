@@ -26,6 +26,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import abci_socket  # noqa: E402
 import dockernet as dn  # noqa: E402
 from dockernet import Fail, check, wait_until, step, sh, DOCKER  # noqa: E402
 import livenet  # noqa: E402
@@ -109,6 +110,113 @@ def hardening(net):
     return rows
 
 
+# ------------------------------------------------------------------ scenario 18: stale ABCI socket (M2.7.1)
+#
+# The socket is judged by behaviour only (tests/docker/abci_socket.py): stale = a Unix socket that refuses
+# connections (ECONNREFUSED); replaced = a fresh connection to the same path gets the exact ABCI Echo of a
+# random nonce. Inode and ctime are reported as diagnostics only: file systems reuse inode numbers.
+
+def expect_stale(sock, when):
+    try:
+        d = abci_socket.check_stale(sock)
+    except abci_socket.SocketOracleError as e:
+        raise Fail(f"{when}: {e}") from None
+    note(f"{when}: leftover Unix socket refuses connections (ECONNREFUSED); inode {d['inode']}, "
+         f"ctime {d['ctime_ns']} (diagnostic)")
+
+
+def expect_answering(sock, timeout, when):
+    try:
+        detail = abci_socket.wait_answering(sock, timeout)
+    except abci_socket.SocketOracleError as e:
+        raise Fail(f"{when}: {e}") from None
+    d = abci_socket.describe(sock)
+    note(f"{when}: {detail}; inode {d.get('inode')}, ctime {d.get('ctime_ns')} (diagnostic)")
+
+
+def wait_terminated(v, which, pid, timeout=30):
+    wait_until(lambda: abci_socket.pid_gone(pid) and not v.alive(which), timeout,
+               f"{v}/{which} (host pid {pid}) to terminate")
+
+
+def run_log(v, which):
+    """Log of the container's current run only (since its State.StartedAt)."""
+    started = v.inspect(which)["State"]["StartedAt"]
+    r = sh([DOCKER, "logs", "--since", started, v.container(which)], check_rc=False)
+    return r.stdout + r.stderr
+
+
+def scenario_18a(net, v, h):
+    """Crash of yapd, then automatic restarts, with no race against the observation of the stale socket:
+    the restart policy is off while the crashed process is observed, and while it is back on, the host
+    holds yapd's exclusive LMDB writer lock, so every automatic restart stops at "cannot start" before it
+    touches the socket (the store is opened before the ABCI server binds). Releasing the lock lets the
+    next automatic restart replace the socket."""
+    sock = os.path.join(v.dir, "abci", "yapd.sock")
+    yc = v.container("yapd")
+    ok, detail = abci_socket.abci_echo(sock)
+    check(ok, f"(a) precondition: the running yapd answers Echo: {detail}")
+    sh([DOCKER, "update", "--restart", "no", yc])
+    policy_restored = False
+    try:
+        pid = v.crash("yapd")
+        wait_terminated(v, "yapd", pid)
+        st = v.state("yapd")
+        check(st["exit"] == 137, f"(a) yapd exit code {st['exit']}, expected 137 (SIGKILL)")
+        expect_stale(sock, "(a) after the crash, before any restart")
+        with yapnode.LmdbLock(os.path.join(v.dir, "yapd", "data")) as lock:
+            check(lock.fd is not None, "(a) the yapd writer lock was not taken")
+            sh([DOCKER, "update", "--restart", "unless-stopped", yc])
+            policy_restored = True
+            sh([DOCKER, "start", yc])   # a manual start resets RestartCount; the policy applies again
+            wait_until(lambda: v.state("yapd")["restarts"] >= 2, 90,
+                       "automatic restarts of yapd refused by the held writer lock")
+            check("cannot start" in v.current_log("yapd"), "(a) a refused restart did not log 'cannot start'")
+            expect_stale(sock, "(a) while automatic restarts are refused")
+            ok, _ = abci_socket.abci_echo(sock)
+            check(not ok, "(a) Echo answered while no yapd can hold the database")
+            held = v.state("yapd")["restarts"]
+    finally:
+        if not policy_restored:
+            sh([DOCKER, "update", "--restart", "unless-stopped", yc], check_rc=False)
+    expect_answering(sock, 120, "(a) writer lock released, next automatic restart")
+    st = v.state("yapd")
+    check(st["running"] and st["pid"] != pid, f"(a) replacement yapd: {st}")
+    # `docker start` reset RestartCount to 0 and its own run failed on the lock (the count reached `held` >= 2
+    # while the lock was held), so a running yapd with RestartCount >= 1 was started by the restart policy.
+    # (The attempt in flight when the lock is released may be the one that succeeds: no further increment.)
+    check(st["restarts"] >= held >= 2, f"(a) the replacement did not come from an automatic restart ({st})")
+    log = run_log(v, "yapd")
+    check("listening on unix://" in log and "cannot start" not in log,
+          "(a) the replacement run's own log does not show a clean start")
+    h_a = net.wait_height(h + 3, timeout=120)
+    wait_healthy(v, "yapd", timeout=120)
+    note(f"(a) restarts refused while the lock was held (RestartCount {held}); replaced by an automatic restart "
+         f"(pid {pid} -> {st['pid']}, RestartCount {st['restarts']}); blocks resumed: height {h_a}")
+    return h_a
+
+
+def scenario_18b(net, v, h_a):
+    """Both containers killed (a kill is a user stop: no automatic restart can race), socket left behind,
+    then a normal `compose up` replaces it."""
+    sock = os.path.join(v.dir, "abci", "yapd.sock")
+    pids = {w: v.state(w)["pid"] for w in ("yapd", "cometbft")}
+    sh([DOCKER, "kill", v.container("cometbft"), v.container("yapd")])
+    for w, pid in pids.items():
+        wait_terminated(v, w, pid)
+    expect_stale(sock, "(b) after docker kill, before the restart")
+    net.up()
+    expect_answering(sock, 60, "(b) after compose up")
+    st = v.state("yapd")
+    check(st["running"] and st["pid"] != pids["yapd"], f"(b) replacement yapd: {st}")
+    log = run_log(v, "yapd")
+    check("listening on unix://" in log and "cannot start" not in log,
+          "(b) the replacement run's own log does not show a clean start")
+    h2 = net.wait_height(h_a + 2, timeout=120)
+    note(f"(b) stale socket left by a kill replaced by the restarted yapd (pid {pids['yapd']} -> {st['pid']}); "
+         f"blocks resumed: height {h2} (single validator: state verified by verify-state in scenario 16)")
+
+
 # ------------------------------------------------------------------ single validator (A) and failure modes
 
 def run_single(base, keep):
@@ -127,24 +235,9 @@ def run_single(base, keep):
         note(f"height {h}, power {st['validator']['voting_power']}/{st['validator']['total_power']}, progress {st['progress']}")
         REPORT["scenarios"]["1"] = "ok"
 
-        step("18", "stale ABCI socket: (a) crash + automatic restart, (b) killed containers, socket left behind")
-        sock = os.path.join(v.dir, "abci", "yapd.sock")
-        ino = os.stat(sock).st_ino
-        listening = v.current_log("yapd").count("listening on unix://")
-        v.crash("yapd")
-        wait_until(lambda: v.current_log("yapd").count("listening on unix://") > listening
-                   and v.state("yapd")["health"] == "healthy", 120, "yapd restarted on the stale socket")
-        check(os.stat(sock).st_ino != ino, "socket was not recreated")
-        h_a = net.wait_height(h + 3, timeout=120)
-        note(f"(a) automatic restart replaced the stale socket (inode {ino} -> {os.stat(sock).st_ino}); height {h_a}")
-        sh([DOCKER, "kill", v.container("cometbft"), v.container("yapd")])   # a kill is a stop: no auto-restart
-        wait_until(lambda: not v.alive("yapd") and not v.alive("cometbft"), 30, "containers killed")
-        check(os.path.exists(sock), "the socket file should survive a SIGKILL of yapd")
-        ino = os.stat(sock).st_ino
-        net.up()
-        h2 = net.wait_height(h_a + 2, timeout=120)
-        check(os.stat(sock).st_ino != ino, "socket was not recreated after the kill")
-        note(f"(b) stale socket left by a kill replaced on start; chain advanced to {h2}")
+        step("18", "stale ABCI socket: (a) crash, automatic restart held off by the writer lock, (b) killed containers")
+        h_a = scenario_18a(net, v, h)
+        scenario_18b(net, v, h_a)
         REPORT["scenarios"]["18"] = "ok"
 
         step("16", "incompatible genesis / chain id: refused by the tools and by the node, no data touched")

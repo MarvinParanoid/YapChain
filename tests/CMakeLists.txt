@@ -85,6 +85,9 @@ if(YAP_BUILD_TESTS)
   # Hardened acquisition of the pinned archives (M2.7): retries, timeouts, 403, truncation, hash mismatch,
   # atomic publication and agreement of the manifest with the cmake/localnet pins; loopback only.
   add_test(NAME ci:fetch-deps COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/ci/test_fetch_deps.py)
+  # Stale ABCI socket oracle of the container suite (M2.7.1): judged by connect/Echo behaviour, never by
+  # inode or timestamps; real Unix sockets in a temporary directory, no Docker or privileges.
+  add_test(NAME docker:socket-oracle COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/docker/test_socket_oracle.py)
   add_test(NAME e2e:workflow COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/e2e/test_e2e_workflow.py $<TARGET_FILE:yap>)
   add_test(NAME cli:tx COMMAND Python3::Interpreter -I ${CMAKE_CURRENT_SOURCE_DIR}/cli/test_tx_cli.py $<TARGET_FILE:yap>)
 
