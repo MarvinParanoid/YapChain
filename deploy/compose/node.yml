@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# D — one YapChain node (validator or full node) on its own Linux host (M2.7, docs/operations.md).
+#
+#   python3 -I scripts/ops/yapnode.py init/configure ... --dir /srv/yapchain/node   # writes compose.env
+#   docker compose --env-file /srv/yapchain/node/compose.env -f deploy/compose/node.yml up -d
+#
+# Two containers per node, both as the node's runtime uid (the ABCI socket is 0600):
+#   yapd      the application; NO network at all (network_mode: none) — CometBFT reaches it only through
+#             the Unix socket in ${NODE_DIR}/abci, which no other container mounts
+#   cometbft  consensus/P2P/RPC; starts only when yapd answers on the socket (healthcheck + entrypoint wait)
+# Volumes (host directories created by yapnode.py, 0700; a missing one is an error, never auto-created):
+#   ${NODE_DIR}/yapd             yapd home; data/ = LMDB state (never shared with another yapd)
+#   ${NODE_DIR}/cometbft         CometBFT home; data/ = blocks, consensus state, signing state
+#   ${NODE_DIR}/cometbft/config  keys, genesis, config.toml — mounted READ-ONLY into CometBFT
+#   ${NODE_DIR}/abci             the ABCI socket (shared by this node's two containers only)
+# Ports: P2P (public, ${P2P_BIND}:${P2P_PORT}) and RPC (${RPC_BIND}, default 127.0.0.1 only). No ABCI or
+# administrative port is published. Metrics: add -f deploy/compose/metrics.yml (127.0.0.1 only).
+# Shutdown: `docker compose down` stops CometBFT first (it depends on yapd), then yapd; both handle SIGTERM.
+
+x-hardening: &hardening
+  restart: unless-stopped
+  user: "${YAP_UID:-10001}:${YAP_GID:-10001}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  stop_grace_period: 60s
+  pids_limit: 512
+  logging:
+    driver: json-file
+    options: {max-size: "50m", max-file: "5"}
+
+services:
+  yapd:
+    <<: *hardening
+    image: ${YAPCHAIN_IMAGE:-yapchain:local}
+    network_mode: none
+    volumes:
+      - {type: bind, source: "${NODE_DIR:?NODE_DIR must point to an initialised node directory}/yapd", target: /var/lib/yapd, bind: {create_host_path: false}}
+      - {type: bind, source: "${NODE_DIR}/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    mem_limit: ${YAPD_MEM_LIMIT:-2g}
+    cpus: ${YAPD_CPUS:-2}
+    labels:
+      io.yapchain.node-dir: ${NODE_DIR}
+      io.yapchain.service: yapd
+
+  cometbft:
+    <<: *hardening
+    image: ${COMETBFT_IMAGE:-yapchain-cometbft:local}
+    depends_on:
+      yapd:
+        condition: service_healthy
+        restart: true
+    volumes:
+      - {type: bind, source: "${NODE_DIR}/cometbft", target: /var/lib/cometbft, bind: {create_host_path: false}}
+      - {type: bind, source: "${NODE_DIR}/cometbft/config", target: /var/lib/cometbft/config, bind: {create_host_path: false}, read_only: true}
+      - {type: bind, source: "${NODE_DIR}/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    ports:
+      - "${P2P_BIND:-0.0.0.0}:${P2P_PORT:-26656}:26656"
+      - "${RPC_BIND:-127.0.0.1}:${RPC_PORT:-26657}:26657"
+    mem_limit: ${COMETBFT_MEM_LIMIT:-2g}
+    cpus: ${COMETBFT_CPUS:-2}
+    labels:
+      io.yapchain.node-dir: ${NODE_DIR}
+      io.yapchain.service: cometbft

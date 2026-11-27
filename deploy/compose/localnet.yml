@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# B — four independent validators sharing one genesis (tolerates 1 faulty validator) (M2.7, docs/operations.md). Generated layout from
+#   python3 -I scripts/ops/yapnode.py localnet --dir NET --validators 4 [--full-nodes 1]
+#   docker compose --env-file NET/compose.env -f deploy/compose/localnet.yml up -d
+#
+# Every node = its own yapd container (no network) + its own CometBFT container, its own keys, its own
+# LMDB and CometBFT data under ${NET_DIR}/<node>/ and its own ABCI socket directory; nothing is shared
+# between nodes except the genesis (byte-identical copies) and the P2P network "yapnet". P2P is not
+# published to the host; each RPC is published on 127.0.0.1 only. Validators reach each other by a
+# fixed address on the network's own subnet (persistent_peers = <node id>@<ip>:26656, PEX off). Addresses, not names: CometBFT
+# resolves peer host names once at start-up and drops a name it cannot resolve yet (a peer container that
+# is not up) for good.
+x-hardening: &hardening
+  restart: unless-stopped
+  user: "${YAP_UID:-10001}:${YAP_GID:-10001}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  stop_grace_period: 60s
+  pids_limit: 512
+  mem_limit: ${NODE_MEM_LIMIT:-1g}
+  logging:
+    driver: json-file
+    options: {max-size: "20m", max-file: "3"}
+
+x-yapd: &yapd
+  <<: *hardening
+  image: ${YAPCHAIN_IMAGE:-yapchain:local}
+  network_mode: none
+
+x-cometbft: &cometbft
+  <<: *hardening
+  image: ${COMETBFT_IMAGE:-yapchain-cometbft:local}
+
+services:
+  validator0-yapd:
+    <<: *yapd
+    volumes:
+      - {type: bind, source: "${NET_DIR:?}/validator0/yapd", target: /var/lib/yapd, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator0/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator0", io.yapchain.service: yapd}
+
+  validator0:
+    <<: *cometbft
+    hostname: validator0
+    networks:
+      yapnet: {ipv4_address: "${YAPNET_PREFIX:-172.31.250}.10"}
+    depends_on:
+      validator0-yapd: {condition: service_healthy, restart: true}
+    volumes:
+      - {type: bind, source: "${NET_DIR}/validator0/cometbft", target: /var/lib/cometbft, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator0/cometbft/config", target: /var/lib/cometbft/config, bind: {create_host_path: false}, read_only: true}
+      - {type: bind, source: "${NET_DIR}/validator0/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    ports: ["${RPC_BIND:-127.0.0.1}:${RPC_PORT_VALIDATOR0:-26657}:26657"]
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator0", io.yapchain.service: cometbft}
+
+  validator1-yapd:
+    <<: *yapd
+    volumes:
+      - {type: bind, source: "${NET_DIR:?}/validator1/yapd", target: /var/lib/yapd, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator1/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator1", io.yapchain.service: yapd}
+
+  validator1:
+    <<: *cometbft
+    hostname: validator1
+    networks:
+      yapnet: {ipv4_address: "${YAPNET_PREFIX:-172.31.250}.11"}
+    depends_on:
+      validator1-yapd: {condition: service_healthy, restart: true}
+    volumes:
+      - {type: bind, source: "${NET_DIR}/validator1/cometbft", target: /var/lib/cometbft, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator1/cometbft/config", target: /var/lib/cometbft/config, bind: {create_host_path: false}, read_only: true}
+      - {type: bind, source: "${NET_DIR}/validator1/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    ports: ["${RPC_BIND:-127.0.0.1}:${RPC_PORT_VALIDATOR1:-26667}:26657"]
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator1", io.yapchain.service: cometbft}
+
+  validator2-yapd:
+    <<: *yapd
+    volumes:
+      - {type: bind, source: "${NET_DIR:?}/validator2/yapd", target: /var/lib/yapd, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator2/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator2", io.yapchain.service: yapd}
+
+  validator2:
+    <<: *cometbft
+    hostname: validator2
+    networks:
+      yapnet: {ipv4_address: "${YAPNET_PREFIX:-172.31.250}.12"}
+    depends_on:
+      validator2-yapd: {condition: service_healthy, restart: true}
+    volumes:
+      - {type: bind, source: "${NET_DIR}/validator2/cometbft", target: /var/lib/cometbft, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator2/cometbft/config", target: /var/lib/cometbft/config, bind: {create_host_path: false}, read_only: true}
+      - {type: bind, source: "${NET_DIR}/validator2/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    ports: ["${RPC_BIND:-127.0.0.1}:${RPC_PORT_VALIDATOR2:-26677}:26657"]
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator2", io.yapchain.service: cometbft}
+
+  validator3-yapd:
+    <<: *yapd
+    volumes:
+      - {type: bind, source: "${NET_DIR:?}/validator3/yapd", target: /var/lib/yapd, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator3/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator3", io.yapchain.service: yapd}
+
+  validator3:
+    <<: *cometbft
+    hostname: validator3
+    networks:
+      yapnet: {ipv4_address: "${YAPNET_PREFIX:-172.31.250}.13"}
+    depends_on:
+      validator3-yapd: {condition: service_healthy, restart: true}
+    volumes:
+      - {type: bind, source: "${NET_DIR}/validator3/cometbft", target: /var/lib/cometbft, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/validator3/cometbft/config", target: /var/lib/cometbft/config, bind: {create_host_path: false}, read_only: true}
+      - {type: bind, source: "${NET_DIR}/validator3/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    ports: ["${RPC_BIND:-127.0.0.1}:${RPC_PORT_VALIDATOR3:-26687}:26657"]
+    labels: {io.yapchain.node-dir: "${NET_DIR}/validator3", io.yapchain.service: cometbft}
+
+networks:
+  yapnet:
+    name: ${COMPOSE_PROJECT_NAME:-yapnet}
+    ipam:
+      config:
+        - subnet: "${YAPNET_PREFIX:-172.31.250}.0/24"

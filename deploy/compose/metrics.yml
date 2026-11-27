@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Optional: publish CometBFT Prometheus metrics of a node.yml node on the host's loopback only.
+# Requires `yapnode.py configure --metrics` (instrumentation.prometheus = true).
+#   docker compose --env-file <node>/compose.env -f deploy/compose/node.yml -f deploy/compose/metrics.yml up -d
+services:
+  cometbft:
+    ports:
+      - "${METRICS_BIND:-127.0.0.1}:${METRICS_PORT:-26660}:26660"

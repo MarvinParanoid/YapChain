@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# C — adds one non-validator full node to the four-validator network B (M2.7):
+#   python3 -I scripts/ops/yapnode.py localnet --dir NET --validators 4 --full-nodes 1
+#   docker compose --env-file NET/compose.env -f deploy/compose/localnet.yml -f deploy/compose/fullnode.yml up -d
+# The full node has its own keys (its validator key is in no validator set), the same genesis bytes,
+# EMPTY databases, and the four validators as persistent peers; it syncs from genesis via blocksync,
+# serves RPC/queries and relays transactions, and never signs.
+x-hardening: &hardening
+  restart: unless-stopped
+  user: "${YAP_UID:-10001}:${YAP_GID:-10001}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  stop_grace_period: 60s
+  pids_limit: 512
+  mem_limit: ${NODE_MEM_LIMIT:-1g}
+  logging:
+    driver: json-file
+    options: {max-size: "20m", max-file: "3"}
+
+x-yapd: &yapd
+  <<: *hardening
+  image: ${YAPCHAIN_IMAGE:-yapchain:local}
+  network_mode: none
+
+x-cometbft: &cometbft
+  <<: *hardening
+  image: ${COMETBFT_IMAGE:-yapchain-cometbft:local}
+
+services:
+  fullnode0-yapd:
+    <<: *yapd
+    volumes:
+      - {type: bind, source: "${NET_DIR:?}/fullnode0/yapd", target: /var/lib/yapd, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/fullnode0/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    labels: {io.yapchain.node-dir: "${NET_DIR}/fullnode0", io.yapchain.service: yapd}
+
+  fullnode0:
+    <<: *cometbft
+    hostname: fullnode0
+    networks:
+      yapnet: {ipv4_address: "${YAPNET_PREFIX:-172.31.250}.20"}
+    depends_on:
+      fullnode0-yapd: {condition: service_healthy, restart: true}
+    volumes:
+      - {type: bind, source: "${NET_DIR}/fullnode0/cometbft", target: /var/lib/cometbft, bind: {create_host_path: false}}
+      - {type: bind, source: "${NET_DIR}/fullnode0/cometbft/config", target: /var/lib/cometbft/config, bind: {create_host_path: false}, read_only: true}
+      - {type: bind, source: "${NET_DIR}/fullnode0/abci", target: /run/yap/abci, bind: {create_host_path: false}}
+    ports: ["${RPC_BIND:-127.0.0.1}:${RPC_PORT_FULLNODE0:-26697}:26657"]
+    labels: {io.yapchain.node-dir: "${NET_DIR}/fullnode0", io.yapchain.service: cometbft}
