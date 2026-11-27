@@ -8,7 +8,7 @@ ports, validator key, node key, logs and reward account; they talk only through 
 loopback. Everything (keys, wallet, databases) is created under one directory that is never inside
 the repository; nothing here is meant to be committed.
 
-    localnet.py build-cometbft --deps-dir DIR | --download   [--out build/cometbft]
+    localnet.py build-cometbft --deps-dir DIR | --download   [--out build/cometbft] [--cache-dir DIR]
     localnet.py init   --dir D --yap BIN --cometbft BIN [--chain-id ID] [--validators N]
     localnet.py start  --dir D --yapd BIN --cometbft BIN [--node I] [--wait-height N]
     localnet.py stop   --dir D [--node I]
@@ -132,18 +132,36 @@ def rfc3339_ms(ms):
 
 # ------------------------------------------------------------------ CometBFT build (ADR-0027)
 
-def build_cometbft(deps_dir, download, out_dir):
+FETCH_DEPS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "deps")
+
+
+def acquire_cometbft_archive(deps_dir, download, cache_dir):
+    """The verified CometBFT source archive (M2.7): taken from deps_dir (offline, verified, never
+    downloaded) or downloaded into cache_dir by tools/deps/fetch_deps.py (bounded retries with
+    backoff, conservative 403 handling, SHA-256 checked before the archive is published; a verified
+    cached archive is reused)."""
+    sys.path.insert(0, os.path.normpath(FETCH_DEPS))
+    import fetch_deps
+    if fetch_deps.DEPS["cometbft"][:3] != (COMETBFT_TARBALL, COMETBFT_SHA256, COMETBFT_URL):
+        raise LocalnetError("tools/deps/fetch_deps.py and localnet.py pin different CometBFT archives")
+    try:
+        if deps_dir:
+            return fetch_deps.fetch("cometbft", deps_dir, offline=True)
+        if download:
+            return fetch_deps.fetch("cometbft", cache_dir)
+    except fetch_deps.FetchError as e:
+        raise LocalnetError(str(e)) from None
+    raise LocalnetError("give --deps-dir with the verified archive or --download")
+
+
+def build_cometbft(deps_dir, download, out_dir, cache_dir=None):
     os.makedirs(out_dir, exist_ok=True)
+    source = acquire_cometbft_archive(deps_dir, download, cache_dir or os.path.join(out_dir, "deps"))
     work = tempfile.mkdtemp(prefix="cometbft-src-", dir=out_dir)
     try:
         archive = os.path.join(work, COMETBFT_TARBALL)
-        if deps_dir:
-            shutil.copyfile(os.path.join(deps_dir, COMETBFT_TARBALL), archive)
-        elif download:
-            urllib.request.urlretrieve(COMETBFT_URL, archive)
-        else:
-            raise LocalnetError("give --deps-dir with the verified archive or --download")
-        got = sha256_file(archive)
+        shutil.copyfile(source, archive)
+        got = sha256_file(archive)  # the private copy is what gets extracted: verify it again
         if got != COMETBFT_SHA256:
             raise LocalnetError(f"{COMETBFT_TARBALL}: SHA-256 {got} != pinned {COMETBFT_SHA256}")
         with tarfile.open(archive) as t:
@@ -730,6 +748,7 @@ def main(argv):
     b.add_argument("--deps-dir")
     b.add_argument("--download", action="store_true")
     b.add_argument("--out", default="build/cometbft")
+    b.add_argument("--cache-dir", help="verified download cache (default: <out>/deps)")
     i = sub.add_parser("init")
     i.add_argument("--dir", required=True)
     i.add_argument("--yap", required=True)
@@ -758,7 +777,7 @@ def main(argv):
     a = ap.parse_args(argv)
     try:
         if a.cmd == "build-cometbft":
-            build_cometbft(a.deps_dir, a.download, a.out)
+            build_cometbft(a.deps_dir, a.download, a.out, a.cache_dir)
         elif a.cmd == "init":
             if a.fault_proxy and a.validators < 2:
                 raise LocalnetError("--fault-proxy needs --validators >= 2")

@@ -19,6 +19,10 @@
 # 1. CometBFT из проверенного архива тега (SHA-256 и коммит — ADR-0027); go.sum проверяется Go.
 python3 -I scripts/localnet/localnet.py build-cometbft --download --out build/cometbft
 #    офлайн: --deps-dir <каталог с cometbft-v0.40.0.tar.gz>
+#    Скачивание — tools/deps/fetch_deps.py (M2.7): ограниченные повторы с задержкой и таймаутами, HTTP 403 —
+#    не более одного повтора, SHA-256 до распаковки, атомарная публикация; проверенный архив кешируется в
+#    <out>/deps (или --cache-dir) и переиспользуется после повторной проверки хеша.
+#    Контейнерные ноды (Docker Compose) — docs/operations.md.
 
 # 2. Временное окружение: cometbft init, ключи кошелька через `yap keys`, genesis через `yap genesis new`,
 #    genesis.json CometBFT с нашим genesis в app_state, config.toml (Unix socket, только 127.0.0.1, без PEX).
