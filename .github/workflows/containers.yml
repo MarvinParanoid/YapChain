@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Container images and container acceptance (M2.7, ADR-0031, docs/operations.md). SEPARATE from the
+# mandatory CI (ci.yml, 15 jobs, docs/ci.md): it is not part of the accepted mandatory policy until the
+# owner decides otherwise (proposal in docs/ci.md, "Контейнеры").
+#
+# - images: both images built NATIVELY on x86_64 and on aarch64 (no emulation), checked (non-root user,
+#   no compiler, C++23 compile check inside the build), then the container acceptance suite runs against
+#   the images on the same runner. ARM64 runtime support is claimed only from the aarch64 run.
+# - soak: the containerised distributed soak (>= 1000 blocks), manual only.
+# Images are never pushed or published anywhere (no registry login, no write permission).
+name: containers
+
+on:
+  workflow_dispatch:
+    inputs:
+      soak:
+        description: "also run the containerised soak (x86_64)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ["docker/**", "deploy/**", "scripts/ops/**", "tools/deps/**", "tests/docker/**", ".dockerignore",
+            "src/**", "cmake/**", "CMakeLists.txt", ".github/workflows/containers.yml"]
+  pull_request:
+    paths: ["docker/**", "deploy/**", "scripts/ops/**", "tools/deps/**", "tests/docker/**", ".dockerignore",
+            "src/**", "cmake/**", "CMakeLists.txt", ".github/workflows/containers.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    name: images + acceptance (${{ matrix.arch }}, native)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Tooling
+        run: |
+          docker version
+          docker compose version
+          test "$(uname -m)" = "${{ matrix.arch }}"
+      - name: Dependency acquisition tests (loopback only)
+        run: python3 -I tests/ci/test_fetch_deps.py
+      - name: Build images (native)
+        run: python3 -I scripts/ops/yapnode.py build --out build/images.json
+      - name: Image checks
+        run: |
+          cat build/images.json
+          for i in yapchain:local yapchain-cometbft:local; do
+            test "$(docker image inspect -f '{{.Config.User}}' $i)" = "10001:10001"
+            test "$(docker image inspect -f '{{.Architecture}}' $i)" = "$(case ${{ matrix.arch }} in x86_64) echo amd64;; aarch64) echo arm64;; esac)"
+          done
+          docker run --rm yapchain:local --version
+          docker run --rm yapchain-cometbft:local version
+          ! docker run --rm --entrypoint sh yapchain:local -c 'command -v gcc g++ cc go cmake'
+      - name: Container acceptance suite (scenarios 1-20)
+        run: python3 -I tests/docker/test_container_suite.py --base "$RUNNER_TEMP/yapdock"
+      - name: Keep reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: containers-${{ matrix.arch }}
+          path: |
+            build/images.json
+            ${{ runner.temp }}/yapdock/report.json
+            ${{ runner.temp }}/yapdock/events.log
+          if-no-files-found: warn
+
+  soak:
+    name: containerised soak (x86_64)
+    if: github.event_name == 'workflow_dispatch' && inputs.soak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Build images
+        run: python3 -I scripts/ops/yapnode.py build --out build/images.json
+      - name: Soak (>= 1000 blocks, seeded faults)
+        run: python3 -I tests/docker/test_container_soak.py --blocks 1000 --base "$RUNNER_TEMP/yapsoak"
+      - name: Keep report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: containers-soak
+          path: |
+            ${{ runner.temp }}/yapsoak/soak-report.json
+            ${{ runner.temp }}/yapsoak/transactions.jsonl
+          if-no-files-found: warn

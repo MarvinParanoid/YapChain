@@ -17,6 +17,9 @@
   the build/test jobs run the whole CTest suite without filters;
 - extended.yml is manual only and runs aarch64/gcc/asan (GCC 14, asan preset, arm64 runner);
 - asan-arm64-diagnose.yml is kept and manual only;
+- containers.yml (M2.7, separate from the mandatory CI) builds the images natively on x86_64 and aarch64,
+  runs the dependency-acquisition tests and the container acceptance suite, keeps the soak manual only,
+  and never logs in to or pushes to a registry;
 - CMakePresets.json keeps the sanitizer presets (asan, tsan, fuzz).
 Prints the expanded matrix and exits non-zero on any finding.
 """
@@ -53,7 +56,8 @@ def expand(matrix):
     whose ORIGINAL axis values it does not contradict (without overwriting them); an entry that
     matches no combination becomes a new one."""
     axes = {k: v for k, v in matrix.items() if k not in ("include", "exclude")}
-    combos = [dict(zip(axes, vals)) for vals in itertools.product(*axes.values())]
+    # No axes (include-only matrix): GitHub starts from no combination, so every include entry is a job.
+    combos = [dict(zip(axes, vals)) for vals in itertools.product(*axes.values())] if axes else []
     for exc in matrix.get("exclude", []):
         combos = [c for c in combos if not all(c.get(k) == v for k, v in exc.items())]
     originals = [dict(c) for c in combos]
@@ -177,6 +181,30 @@ def main(root):
             for need in ("CXX=g++-14", "cmake --preset asan", "cmake --build --preset asan", "ctest --preset asan"):
                 if need not in steps:
                     finding(f"extended.yml arm64-gcc-asan: missing '{need}'")
+    cont = docs.get("containers.yml")
+    if cont is None:
+        finding("containers.yml missing (M2.7 container build and acceptance)")
+    else:
+        text = json.dumps(cont)
+        for bad in ("docker push", "docker login", "--push", "packages: write", "ghcr.io"):
+            if bad in text:
+                finding(f"containers.yml: '{bad}' (images must not be published without approval)")
+        img = cont["jobs"].get("images")
+        if img is None:
+            finding("containers.yml: no 'images' job")
+        else:
+            got = {(c.get("arch"), c.get("runner")) for c in expand(img["strategy"]["matrix"])}
+            if got != {("x86_64", "ubuntu-24.04"), ("aarch64", "ubuntu-24.04-arm")}:
+                finding(f"containers.yml images: native runners {sorted(got)}, expected x86_64 and aarch64")
+            steps = " ".join(s.get("run", "") for s in img.get("steps", []))
+            for need in ("scripts/ops/yapnode.py build", "tests/docker/test_container_suite.py", "tests/ci/test_fetch_deps.py"):
+                if need not in steps:
+                    finding(f"containers.yml images: missing '{need}'")
+            if "if" in img:
+                finding("containers.yml images: conditional job")
+        soak = cont["jobs"].get("soak")
+        if soak is not None and "workflow_dispatch" not in str(soak.get("if", "")):
+            finding("containers.yml soak: must be manual only")
     diag = docs.get("asan-arm64-diagnose.yml")
     if diag is None:
         finding("asan-arm64-diagnose.yml missing")
