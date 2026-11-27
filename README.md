@@ -40,7 +40,11 @@ YapChain — open-source блокчейн мемной экосистемы с �
 - **M2.6 Сетевой CLI** — реализован: `yap network` — запросы состояния, блоков и транзакций, отправка транзакций,
   подписанных локальным keystore (или офлайн), и ожидание финализации через RPC CometBFT с проверкой chain id
   ([docs/cli-network.md](docs/cli-network.md)).
-- M2.7+ — впереди, см. [docs/roadmap.md](docs/roadmap.md).
+- **M2.6.2 C++23** — принят: весь собственный код — C++23 (GCC ≥ 13, Clang ≥ 18), протокол не изменился.
+- **M2.7 Docker** — в приёмке: воспроизводимые образы `yapd`/`yap` и CometBFT, Compose для одиночной ноды,
+  четырёх валидаторов и full node, инициализация, состояние, резервное копирование и восстановление
+  ([docs/operations.md](docs/operations.md)).
+- M2.8+ — впереди, см. [docs/roadmap.md](docs/roadmap.md).
 
 Локальная сеть из четырёх валидаторов ([scripts/localnet](scripts/localnet/README.md)) выдерживает отказ одного
 валидатора; публичного testnet нет. Dev-цепочка — локальный инструмент разработки с одним производителем блоков.
@@ -110,6 +114,7 @@ python3 -I tools/refgen/refgen.py --out test-vectors    # перегенерир
 | [docs/threat-model.md](docs/threat-model.md) | Модель угроз |
 | [docs/cli-network.md](docs/cli-network.md) | Сетевой режим CLI: команды, настройки, доверие к RPC, коды выхода |
 | [docs/fault-tolerance.md](docs/fault-tolerance.md) | Результаты проверок отказоустойчивости сети (M2.5) |
+| [docs/operations.md](docs/operations.md) | Эксплуатация ноды в Docker: сборка, развёртывание, состояние, резервное копирование и восстановление |
 | [docs/roadmap.md](docs/roadmap.md) | Этапы, scope и тест-план M1 |
 | [docs/adr/](docs/adr/) | Архитектурные решения (ADR) |
 

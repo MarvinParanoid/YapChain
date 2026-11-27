@@ -268,13 +268,31 @@ python3 -I tools/cxx23-probes/run_probes.py --tc "GCC 14=g++-14" \
 
 | Задание | Что делает |
 |---|---|
-| `live` | Go 1.27.4 (`actions/setup-go`, без кеша), CometBFT v0.40.0 из архива тега с проверкой SHA-256 и `go mod verify` (`localnet.py build-cometbft --download`, ADR-0027); GCC 14 Debug с `YAP_COMETBFT_BIN`; проверка, что зарегистрированы ровно 3 теста `integration:(live_cometbft|live_multival|live_netcli)` (пустой выбор — ошибка); их запуск |
+| `live` | Go 1.27.4 (`actions/setup-go`, без кеша), CometBFT v0.40.0 из архива тега с проверкой SHA-256 и `go mod verify` (`localnet.py build-cometbft --download`, ADR-0027; с M2.7 — через `tools/deps/fetch_deps.py`: ограниченные повторы с задержкой, осторожная обработка HTTP 403, атомарная публикация проверенного архива); GCC 14 Debug с `YAP_COMETBFT_BIN`; проверка, что зарегистрированы ровно 3 теста `integration:(live_cometbft|live_multival|live_netcli)` (пустой выбор — ошибка); их запуск |
 | `tsan` | то же с Clang 18 и пресетом `tsan` (TSan-сборка `yapd` в живых тестах); весь набор, кроме долгих сценариев `fault`; только задокументированные подавления LMDB (`cmake/tsan-suppressions.txt`) |
 
 Ограничения TSan на GitHub runners: LLVM 18 TSan не размещает теневую память при 32-битной рандомизации mmap новых
 ядер («unexpected memory mapping»), поэтому задание ставит `vm.mmap_rnd_bits=28` (только на раннере). TSan
 замедляет код в 5–15 раз: живые тесты чувствительны ко времени, при нестабильности их нужно разбирать, а не
 отключать. Новых подавлений не добавлено.
+
+## Контейнеры (`.github/workflows/containers.yml`, M2.7)
+Отдельный от обязательного CI workflow (не входит в 15 заданий и в принятую политику, пока владелец не решит
+иначе). Запуск: push в `main` и pull request, затрагивающие образы/исходники (`docker/`, `deploy/`,
+`scripts/ops/`, `tools/deps/`, `tests/docker/`, `src/`, `cmake/`), и вручную.
+
+| Задание | Что делает |
+|---|---|
+| `images` (x86_64 `ubuntu-24.04`, aarch64 `ubuntu-24.04-arm`) | **нативная** сборка обоих образов (`yapnode.py build`, без эмуляции), тесты получения зависимостей (`test_fetch_deps.py`), проверки образов (пользователь `10001:10001`, архитектура, нет компилятора), приёмочный набор `tests/docker/test_container_suite.py` (сценарии 1–20) против этих образов |
+| `soak` (x86_64, только вручную) | контейнерный soak (≥ 1000 блоков, отказы контейнеров и сети) |
+
+Образы никуда не публикуются: нет входа в реестр и прав на запись (проверяет `check_workflows.py` вместе с
+нативными раннерами обеих архитектур и ручным soak; 5 мутаций в `test_check_workflows.py`).
+
+**Предлагаемая политика приёмки (решение владельца):** после двух подряд зелёных прогонов `images` на обеих
+архитектурах сделать их обязательными для изменений в `docker/`, `deploy/`, `scripts/ops/`, `tools/deps/`
+(сначала x86_64, aarch64 — после подтверждения стабильности нативного прогона); soak — по ручному запуску перед
+релизом образов. До решения workflow информационный.
 
 ## Долгие сценарии (`.github/workflows/extended.yml`)
 Только ручной запуск (`workflow_dispatch`): сценарии отказов M2.5 (`-L fault`, 7 тестов: infra, quorum, partition,
