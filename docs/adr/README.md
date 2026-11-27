@@ -35,3 +35,4 @@
 | [0028](0028-abci-adapter.md) | ABCI++ адаптер: синхронизация, fail-stop, InitChain, Query | DECIDED |
 | [0029](0029-rpc-client.md) | Клиент CometBFT RPC: libcurl, ограничения, строгий JSON-RPC, доверие | DECIDED |
 | [0030](0030-cxx23.md) | C++23 — язык проекта; пары компилятор + libstdc++, политика возможностей | DECIDED |
+| [0031](0031-containers.md) | Контейнеры и эксплуатация ноды: два контейнера, Unix socket, офлайн-сборка, резервное копирование | DECIDED |
